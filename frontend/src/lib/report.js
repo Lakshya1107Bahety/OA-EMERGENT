@@ -85,6 +85,20 @@ export async function generateReport(patient, screening) {
     doc.text(doc.splitTextToSize(screening.doctor_notes, W - 80), 40, y);
   }
 
+  if (screening.movement_summary) {
+    const m = screening.movement_summary;
+    y += 34;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("Functional Movement Assessment", 40, y);
+    y += 16;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    doc.text(`Overall movement score: ${m.overall_score}/100  (${m.movement_risk_level} risk)`, 40, y);
+    y += 16;
+    doc.text(`Tests completed: ${m.test_count}  ·  Assessed: ${new Date(m.assessed_at).toLocaleString()}`, 40, y);
+  }
+
   // QR code
   const qrPayload = JSON.stringify({
     id: screening.id, patient: patient.name, age: patient.age,

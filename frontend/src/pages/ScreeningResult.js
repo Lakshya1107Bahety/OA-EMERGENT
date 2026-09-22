@@ -119,6 +119,16 @@ export default function ScreeningResult() {
         <ScoreCard icon={Gauge} label="Balance Score" value={r.balance_score} suffix="/100" testid="score-balance" />
       </div>
 
+      {data.movement_summary && (
+        <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5 flex items-center justify-between" data-testid="movement-summary-card">
+          <div>
+            <p className="text-sm font-semibold text-slate-700">Functional Movement Assessment</p>
+            <p className="text-sm text-slate-500">{data.movement_summary.test_count} test(s) · {data.movement_summary.movement_risk_level} risk</p>
+          </div>
+          <span className="font-heading text-3xl font-bold text-secondary">{data.movement_summary.overall_score}%</span>
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5">
           <h3 className="font-heading font-semibold text-slate-800 mb-4">Contributing Factors</h3>

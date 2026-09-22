@@ -152,6 +152,19 @@ class DoctorReviewInput(BaseModel):
     status: str = "reviewed"
 
 
+class MovementTest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    test_type: str
+    metrics: Dict[str, Any] = {}
+    quality_score: float = 0
+    duration: Optional[float] = None
+
+
+class MovementAssessmentInput(BaseModel):
+    patient_id: str
+    tests: List[MovementTest]
+
+
 # ---------------------------------------------------------------- auth routes
 @api.post("/auth/register")
 async def register(body: RegisterInput):
@@ -227,7 +240,54 @@ async def get_patient(patient_id: str, user: dict = Depends(get_current_user)):
     if not p:
         raise HTTPException(status_code=404, detail="Patient not found")
     screenings = await db.screenings.find({"patient_id": patient_id}).sort("created_at", -1).to_list(1000)
-    return {"patient": clean(p), "screenings": [clean(s) for s in screenings]}
+    movements = await db.movement_assessments.find({"patient_id": patient_id}).sort("created_at", -1).to_list(1000)
+    return {
+        "patient": clean(p),
+        "screenings": [clean(s) for s in screenings],
+        "movement_assessments": [clean(m) for m in movements],
+    }
+
+
+# ---------------------------------------------------------------- movement assessment
+def _movement_risk(overall: float) -> str:
+    if overall >= 75:
+        return "Low"
+    if overall >= 55:
+        return "Moderate"
+    if overall >= 35:
+        return "High"
+    return "Severe"
+
+
+@api.post("/movement-assessments")
+async def create_movement_assessment(body: MovementAssessmentInput, user: dict = Depends(get_current_user)):
+    patient = await db.patients.find_one({"_id": ObjectId(body.patient_id)})
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    if not body.tests:
+        raise HTTPException(status_code=400, detail="No movement tests submitted")
+    tests = [t.model_dump() for t in body.tests]
+    scores = [t["quality_score"] for t in tests if t.get("quality_score") is not None]
+    overall = round(sum(scores) / len(scores), 1) if scores else 0.0
+    risk = _movement_risk(overall)
+    doc = {
+        "patient_id": body.patient_id,
+        "tests": tests,
+        "overall_score": overall,
+        "movement_risk_level": risk,
+        "created_by": user["id"],
+        "created_at": now_iso(),
+    }
+    res = await db.movement_assessments.insert_one(doc)
+    saved = await db.movement_assessments.find_one({"_id": res.inserted_id})
+    return clean(saved)
+
+
+@api.get("/movement-assessments")
+async def list_movement_assessments(patient_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    q = {"patient_id": patient_id} if patient_id else {}
+    items = await db.movement_assessments.find(q).sort("created_at", -1).to_list(1000)
+    return [clean(i) for i in items]
 
 
 # ---------------------------------------------------------------- dataset (placeholder)
@@ -273,11 +333,24 @@ async def create_screening(body: ScreeningInput, user: dict = Depends(get_curren
     dataset_rows = ds["rows"] if ds else None
     result = prediction_engine.predict(readings, clean(patient), dataset_rows)
 
+    latest_movement = await db.movement_assessments.find_one(
+        {"patient_id": body.patient_id}, sort=[("created_at", -1)]
+    )
+    movement_summary = None
+    if latest_movement:
+        movement_summary = {
+            "overall_score": latest_movement["overall_score"],
+            "movement_risk_level": latest_movement["movement_risk_level"],
+            "test_count": len(latest_movement.get("tests", [])),
+            "assessed_at": latest_movement["created_at"],
+        }
+
     doc = {
         "patient_id": body.patient_id,
         "readings": readings,
         "reading_count": len(readings),
         "result": result,
+        "movement_summary": movement_summary,
         "created_by": user["id"],
         "created_at": now_iso(),
         "review_status": "pending",

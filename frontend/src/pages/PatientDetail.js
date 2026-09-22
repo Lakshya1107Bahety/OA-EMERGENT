@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import RiskBadge from "@/components/RiskBadge";
 import { generateReport } from "@/lib/report";
 import { toast } from "sonner";
-import { Loader2, Activity, FileDown, ArrowLeft, Phone, MapPin, Briefcase } from "lucide-react";
+import { Loader2, Activity, FileDown, ArrowLeft, Phone, MapPin, Briefcase, Bone } from "lucide-react";
 
 export default function PatientDetail() {
   const { id } = useParams();
@@ -19,6 +19,7 @@ export default function PatientDetail() {
   if (!data) return <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
   const { patient, screenings } = data;
+  const movements = data.movement_assessments || [];
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -37,9 +38,14 @@ export default function PatientDetail() {
               <p className="text-slate-600">{patient.age} years · {patient.gender} · BMI {patient.bmi ?? "—"}</p>
             </div>
           </div>
-          <Button className="rounded-xl h-11" data-testid="start-screening-button" onClick={() => navigate(`/app/screening/${patient.id}`)}>
-            <Activity className="w-4 h-4 mr-2" /> New Screening
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button className="rounded-xl h-11" data-testid="start-screening-button" onClick={() => navigate(`/app/screening/${patient.id}`)}>
+              <Activity className="w-4 h-4 mr-2" /> New Screening
+            </Button>
+            <Button variant="outline" className="rounded-xl h-11" data-testid="start-movement-button" onClick={() => navigate(`/app/movement/${patient.id}`)}>
+              <Bone className="w-4 h-4 mr-2" /> Movement Test
+            </Button>
+          </div>
         </div>
         <div className="mt-5 grid sm:grid-cols-3 gap-4 text-sm">
           <span className="flex items-center gap-2 text-slate-600"><Phone className="w-4 h-4 text-primary" /> {patient.phone || "—"}</span>
@@ -77,6 +83,33 @@ export default function PatientDetail() {
                   <Button size="sm" variant="ghost" className="rounded-xl" onClick={() => generateReport(patient, s)} data-testid={`pdf-${s.id}`}>
                     <FileDown className="w-4 h-4" />
                   </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h2 className="font-heading text-xl font-bold text-slate-900 mb-3">Movement Assessments</h2>
+        {movements.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-emerald-900/10 p-8 text-center text-slate-500" data-testid="no-movement">
+            No movement assessments yet.
+          </div>
+        ) : (
+          <div className="space-y-3" data-testid="movement-history">
+            {movements.map((m) => (
+              <div key={m.id} className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-4 flex items-center justify-between gap-4" data-testid={`movement-row-${m.id}`}>
+                <div className="flex items-center gap-4">
+                  <div className="text-center">
+                    <p className="font-heading text-2xl font-bold text-secondary">{m.overall_score}%</p>
+                    <RiskBadge level={m.movement_risk_level} />
+                  </div>
+                  <div className="text-sm text-slate-600">
+                    <p>{new Date(m.created_at).toLocaleString()}</p>
+                    <p>{m.tests?.length || 0} functional test(s)</p>
+                    <p className="text-xs mt-1">{(m.tests || []).map((t) => t.test_type.replace(/_/g, " ")).join(", ")}</p>
+                  </div>
                 </div>
               </div>
             ))}

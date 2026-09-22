@@ -13,6 +13,7 @@ import PatientRecords from "@/pages/PatientRecords";
 import PatientDetail from "@/pages/PatientDetail";
 import Screening from "@/pages/Screening";
 import ScreeningResult from "@/pages/ScreeningResult";
+import MovementAssessment from "@/pages/MovementAssessment";
 import DoctorReview from "@/pages/DoctorReview";
 import AwarenessHub from "@/pages/AwarenessHub";
 import Settings from "@/pages/Settings";
@@ -41,6 +42,8 @@ function App() {
               <Route path="patients/:id" element={<PatientDetail />} />
               <Route path="screening" element={<Screening />} />
               <Route path="screening/:patientId" element={<Screening />} />
+              <Route path="movement" element={<MovementAssessment />} />
+              <Route path="movement/:patientId" element={<MovementAssessment />} />
               <Route path="result/:screeningId" element={<ScreeningResult />} />
               <Route
                 path="doctor-review"
