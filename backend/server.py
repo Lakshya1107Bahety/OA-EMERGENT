@@ -269,7 +269,7 @@ async def create_movement_assessment(body: MovementAssessmentInput, user: dict =
     tests = [t.model_dump() for t in body.tests]
     scores = [t["quality_score"] for t in tests if t.get("quality_score") is not None]
     overall = round(sum(scores) / len(scores), 1) if scores else 0.0
-    risk = _movement_risk(overall)
+    risk = "Insufficient Data" if overall <= 0 else _movement_risk(overall)
     doc = {
         "patient_id": body.patient_id,
         "tests": tests,

@@ -189,6 +189,79 @@ def test_doctor_review_success():
     r2 = requests.get(f"{API}/screenings?review_status=pending", headers=_hdr(state["doctor_token"]))
     assert not any(s["id"] == state["screening_id"] for s in r2.json())
 
+# ------------------------------------------------------------- movement assessments
+def test_create_movement_assessment():
+    body = {
+        "patient_id": state["patient_id"],
+        "tests": [
+            {"test_type": "sit_to_stand", "metrics": {"repetitions": 10}, "quality_score": 70, "duration": 30},
+            {"test_type": "squat", "metrics": {"depth": 90}, "quality_score": 60, "duration": 15},
+        ],
+    }
+    r = requests.post(f"{API}/movement-assessments", json=body, headers=_hdr(state["worker_token"]))
+    assert r.status_code == 200, r.text
+    m = r.json()
+    assert m["overall_score"] == 65.0
+    assert m["movement_risk_level"] == "Moderate"
+    assert len(m["tests"]) == 2
+    assert "id" in m
+    state["movement_id"] = m["id"]
+
+
+def test_create_movement_assessment_empty_tests():
+    r = requests.post(f"{API}/movement-assessments",
+                      json={"patient_id": state["patient_id"], "tests": []},
+                      headers=_hdr(state["worker_token"]))
+    assert r.status_code == 400
+
+
+def test_list_movement_assessments_by_patient():
+    r = requests.get(f"{API}/movement-assessments?patient_id={state['patient_id']}",
+                     headers=_hdr(state["worker_token"]))
+    assert r.status_code == 200
+    lst = r.json()
+    assert any(m["id"] == state["movement_id"] for m in lst)
+
+
+def test_patient_detail_includes_movement():
+    r = requests.get(f"{API}/patients/{state['patient_id']}", headers=_hdr(state["worker_token"]))
+    assert r.status_code == 200
+    j = r.json()
+    assert "movement_assessments" in j
+    assert any(m["id"] == state["movement_id"] for m in j["movement_assessments"])
+
+
+def test_screening_attaches_movement_summary():
+    # Create a NEW screening AFTER the movement assessment exists
+    body = {"patient_id": state["patient_id"], "readings": _fake_readings(10)}
+    r = requests.post(f"{API}/screenings", json=body, headers=_hdr(state["worker_token"]))
+    assert r.status_code == 200, r.text
+    new_screening_id = r.json()["id"]
+
+    # GET screening detail and verify movement_summary attached
+    r2 = requests.get(f"{API}/screenings/{new_screening_id}", headers=_hdr(state["worker_token"]))
+    assert r2.status_code == 200
+    s = r2.json()
+    ms = s.get("movement_summary")
+    assert ms is not None, f"movement_summary missing from screening: {s}"
+    assert ms["overall_score"] == 65.0
+    assert ms["movement_risk_level"] == "Moderate"
+    assert ms["test_count"] == 2
+
+
+def test_movement_risk_severe_when_low_score():
+    body = {
+        "patient_id": state["patient_id"],
+        "tests": [{"test_type": "gait", "metrics": {"cadence": 40}, "quality_score": 20, "duration": 20}],
+    }
+    r = requests.post(f"{API}/movement-assessments", json=body, headers=_hdr(state["worker_token"]))
+    assert r.status_code == 200
+    m = r.json()
+    assert m["overall_score"] == 20.0
+    assert m["movement_risk_level"] == "Severe"
+
+
+
 
 # ------------------------------------------------------------- dataset upload
 def test_dataset_upload_worker_denied():
