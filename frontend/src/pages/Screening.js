@@ -114,11 +114,11 @@ export default function Screening() {
   const connectBluetooth = async () => {
     if (!bleSupported()) { toast.error("Web Bluetooth not supported. Use Chrome/Edge on desktop or Android."); return; }
     try {
-      openWs();
       const conn = await connectBLE({
         onReading: handleReading,
         onDisconnect: () => { setConnected(false); setSource(null); toast.warning("BLE device disconnected"); },
       });
+      openWs();
       bleRef.current = conn;
       setBleName(conn.deviceName);
       setSource("ble");
