@@ -55,3 +55,28 @@ export function pick(obj, candidates) {
   }
   return undefined;
 }
+
+// Exact camera biomechanics schema expected by the OA Sentinel backend.
+export const BIOMECH_NUMERIC_FIELDS = [
+  "biomechanical_prediction", "biomechanical_score",
+  "right_knee_rom_deg", "left_knee_rom_deg", "right_hip_rom_deg", "left_hip_rom_deg",
+  "step_duration_sec", "stride_duration_sec", "cadence_steps_min",
+  "knee_rom_asymmetry_pct", "step_time_asymmetry_pct", "trunk_lean_deg",
+];
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// Coerce each averaged trial to EXACTLY the fields the backend expects
+// (participant_id + the 12 numeric biomechanics fields). Any other columns —
+// e.g. knee_angle, balance_score, symmetry_score, raw acc/gyro — are dropped.
+export function normalizeCameraResults(rows, participantId) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row, i) => {
+    const out = { participant_id: String(row.participant_id ?? participantId ?? `P${i + 1}`) };
+    for (const f of BIOMECH_NUMERIC_FIELDS) out[f] = num(row[f]);
+    return out;
+  });
+}

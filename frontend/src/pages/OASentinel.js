@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
-import { checkHealth, analyze, averageEvery, loadLastSession, pick, OA_API_URL } from "@/lib/oaApi";
+import { checkHealth, analyze, averageEvery, loadLastSession, pick, normalizeCameraResults, OA_API_URL } from "@/lib/oaApi";
 import { parseCSV } from "@/lib/csv";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -83,9 +83,11 @@ export default function OASentinel() {
     const p = patients.find((x) => x.id === selected);
     if (!p) return null;
     return {
-      patient_id: p.id, name: p.name, age: p.age, gender: p.gender,
-      height_cm: p.height_cm, weight_kg: p.weight_kg, bmi: p.bmi,
-      village: p.village, district: p.district, occupation: p.occupation,
+      patient_id: p.id,
+      age: p.age,
+      gender: p.gender,
+      height_cm: p.height_cm ?? null,
+      mass_kg: p.weight_kg ?? null,
     };
   };
 
@@ -95,9 +97,10 @@ export default function OASentinel() {
     if (!selected) { toast.error("Select a patient"); return; }
     if (!cameraResults.length) { toast.error("Load camera_results (CSV or sensor session) first"); return; }
     const patient = buildPatient();
+    const camera_results = normalizeCameraResults(cameraResults, selected);
     setAnalyzing(true);
     try {
-      const data = await analyze({ patient, camera_results: cameraResults, patient_id: selected });
+      const data = await analyze({ patient, camera_results, patient_id: selected });
       if (data.success) {
         setResult(data.result);
         toast.success("Analysis complete");
