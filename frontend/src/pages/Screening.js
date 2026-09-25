@@ -75,6 +75,7 @@ export default function Screening() {
 
   const handleReading = (r) => {
     readingsRef.current.push(r);
+    try { localStorage.setItem("jc_last_session", JSON.stringify(readingsRef.current.slice(-600))); } catch {}
     setLatest(r);
     setCount(readingsRef.current.length);
     setRolling(computeRolling());

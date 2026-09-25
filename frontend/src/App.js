@@ -14,6 +14,7 @@ import PatientDetail from "@/pages/PatientDetail";
 import Screening from "@/pages/Screening";
 import ScreeningResult from "@/pages/ScreeningResult";
 import MovementAssessment from "@/pages/MovementAssessment";
+import OASentinel from "@/pages/OASentinel";
 import DoctorReview from "@/pages/DoctorReview";
 import AwarenessHub from "@/pages/AwarenessHub";
 import Settings from "@/pages/Settings";
@@ -44,6 +45,8 @@ function App() {
               <Route path="screening/:patientId" element={<Screening />} />
               <Route path="movement" element={<MovementAssessment />} />
               <Route path="movement/:patientId" element={<MovementAssessment />} />
+              <Route path="analyze" element={<OASentinel />} />
+              <Route path="analyze/:patientId" element={<OASentinel />} />
               <Route path="result/:screeningId" element={<ScreeningResult />} />
               <Route
                 path="doctor-review"

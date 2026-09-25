@@ -5,7 +5,7 @@ import { syncPending, getPending } from "@/lib/offline";
 import { toast } from "sonner";
 import {
   LayoutDashboard, Users, Activity, Stethoscope, BookOpen, Settings as SettingsIcon,
-  LogOut, HeartPulse, Wifi, WifiOff, Menu, X, CloudUpload, Bone,
+  LogOut, HeartPulse, Wifi, WifiOff, Menu, X, CloudUpload, Bone, Server,
 } from "lucide-react";
 
 const NAV = [
@@ -13,6 +13,7 @@ const NAV = [
   { to: "/app/patients", label: "Patients", icon: Users },
   { to: "/app/screening", label: "AI Screening", icon: Activity },
   { to: "/app/movement", label: "Movement", icon: Bone },
+  { to: "/app/analyze", label: "Cloud Analyze", icon: Server },
   { to: "/app/doctor-review", label: "Doctor Review", icon: Stethoscope, roles: ["doctor", "admin"] },
   { to: "/app/awareness", label: "Awareness Hub", icon: BookOpen },
   { to: "/app/settings", label: "Settings", icon: SettingsIcon },

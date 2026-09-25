@@ -19,6 +19,7 @@ import secrets
 import io
 import csv
 import json
+import httpx
 
 import prediction_engine
 
@@ -36,6 +37,7 @@ logger = logging.getLogger("jointcare")
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGO = "HS256"
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
+OA_API_URL = os.environ.get("OA_API_URL", "").rstrip("/")
 
 ROLES = {"healthcare_worker", "doctor", "admin"}
 
@@ -567,6 +569,71 @@ async def sensor_ws(websocket: WebSocket, session_id: str):
         manager.disconnect(session_id, websocket)
     except Exception:
         manager.disconnect(session_id, websocket)
+
+
+# ---------------------------------------------------------------- OA Sentinel API proxy
+# Server-side proxy to the external Render API (bypasses its missing CORS headers).
+class OAAnalyzeInput(BaseModel):
+    patient: Dict[str, Any]
+    camera_results: List[Dict[str, Any]]
+    patient_id: Optional[str] = None
+
+
+def _safe_json(resp):
+    try:
+        return resp.json()
+    except Exception:
+        return {"raw": resp.text}
+
+
+@api.get("/oa/health")
+async def oa_health():
+    if not OA_API_URL:
+        return {"connected": False, "detail": "OA_API_URL not configured", "url": None}
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(f"{OA_API_URL}/health")
+        return {"connected": r.status_code == 200, "status_code": r.status_code,
+                "upstream": _safe_json(r), "url": OA_API_URL}
+    except Exception as e:
+        return {"connected": False, "detail": str(e), "url": OA_API_URL}
+
+
+@api.post("/oa/analyze")
+async def oa_analyze(body: OAAnalyzeInput, user: dict = Depends(get_current_user)):
+    if not OA_API_URL:
+        raise HTTPException(status_code=503, detail="OA_API_URL is not configured on the server")
+    if not body.camera_results:
+        raise HTTPException(status_code=400, detail="camera_results is empty")
+    payload = {"patient": body.patient, "camera_results": body.camera_results}
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(f"{OA_API_URL}/analyze", json=payload)
+    except httpx.TimeoutException:
+        return {"success": False, "error": "OA Sentinel API timed out. The free-tier server may be waking up — please try again in a moment."}
+    except httpx.RequestError as e:
+        return {"success": False, "error": f"Could not reach OA Sentinel API: {e}"}
+    data = _safe_json(r)
+    if r.status_code >= 400:
+        msg = data.get("error") if isinstance(data, dict) else str(data)
+        return {"success": False, "status_code": r.status_code,
+                "error": f"OA Sentinel API returned an error ({r.status_code}): {msg}"}
+
+    if body.patient_id:
+        try:
+            await db.screenings.insert_one({
+                "patient_id": body.patient_id,
+                "source": "oa_sentinel_api",
+                "camera_results": body.camera_results,
+                "result": data,
+                "reading_count": len(body.camera_results),
+                "created_by": user["id"],
+                "created_at": now_iso(),
+                "review_status": "pending",
+            })
+        except Exception:
+            logger.exception("Failed to persist OA analyze result")
+    return {"success": True, "result": data}
 
 
 # ---------------------------------------------------------------- startup
