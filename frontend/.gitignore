@@ -21,3 +21,6 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# vendored MediaPipe wasm (regenerated from node_modules)
+public/mediapipe/
