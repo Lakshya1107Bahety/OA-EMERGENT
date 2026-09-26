@@ -1,0 +1,530 @@
+{
+  "created_at": "2026-09-26T14:47:29",
+  "source": "C:\\Users\\Lakshya\\Documents\\SIH FINAL\\oa-sentinel-api-main\\oa-sentinel-api-main\\camera_results.csv",
+  "n_reference_participants": 49,
+  "n_total_trials": 3003,
+  "total_participants_enrolled": 51,
+  "method": {
+    "mean_biomechanical_score_weight": 0.7,
+    "abnormal_trial_rate_weight": 0.3,
+    "low_upper_percentile": 90.0,
+    "moderate_upper_percentile": 97.5
+  },
+  "thresholds": {
+    "p90": 88.08163265306123,
+    "p97_5": 96.3673469387755
+  },
+  "features": [
+    "right_knee_rom_deg",
+    "left_knee_rom_deg",
+    "right_hip_rom_deg",
+    "left_hip_rom_deg",
+    "step_duration_sec",
+    "stride_duration_sec",
+    "cadence_steps_min",
+    "knee_rom_asymmetry_pct",
+    "step_time_asymmetry_pct",
+    "trunk_lean_deg"
+  ],
+  "feature_distributions": {
+    "right_knee_rom_deg": {
+      "mean": 67.74037387554596,
+      "std": 22.440710972317056,
+      "p5": 40.73954612280134,
+      "p25": 55.152744550481906,
+      "median": 59.87641427981053,
+      "p75": 80.65633196869724,
+      "p95": 105.85826777339771,
+      "min": 7.302303366261839,
+      "max": 178.22928672154833
+    },
+    "left_knee_rom_deg": {
+      "mean": 62.3356927753516,
+      "std": 18.851232174322,
+      "p5": 33.55700611629853,
+      "p25": 52.36435185808157,
+      "median": 58.44567166400248,
+      "p75": 72.62951821224271,
+      "p95": 99.65040386657536,
+      "min": 11.547933861432767,
+      "max": 151.59893504182654
+    },
+    "right_hip_rom_deg": {
+      "mean": 70.59556842964739,
+      "std": 22.114377482032918,
+      "p5": 32.3897917083415,
+      "p25": 53.76965511773335,
+      "median": 72.88731915783202,
+      "p75": 87.80042664794462,
+      "p95": 103.06752824203515,
+      "min": 17.45700663256082,
+      "max": 135.4314715137004
+    },
+    "left_hip_rom_deg": {
+      "mean": 77.26169388177941,
+      "std": 26.486303731450757,
+      "p5": 34.7897878178176,
+      "p25": 55.90742210951061,
+      "median": 78.86198782094841,
+      "p75": 95.86530950177695,
+      "p95": 120.48723169038423,
+      "min": 11.989545290288136,
+      "max": 162.56849989782896
+    },
+    "step_duration_sec": {
+      "mean": 0.5013790003595829,
+      "std": 0.11838712412741065,
+      "p5": 0.33,
+      "p25": 0.405,
+      "median": 0.495,
+      "p75": 0.585,
+      "p95": 0.71,
+      "min": 0.3,
+      "max": 0.91
+    },
+    "stride_duration_sec": {
+      "mean": 1.0027580007191659,
+      "std": 0.23677424825482127,
+      "p5": 0.66,
+      "p25": 0.81,
+      "median": 0.99,
+      "p75": 1.17,
+      "p95": 1.42,
+      "min": 0.6,
+      "max": 1.82
+    },
+    "cadence_steps_min": {
+      "mean": 126.56749937723934,
+      "std": 30.192116622882807,
+      "p5": 84.50704225352113,
+      "p25": 102.56410256410255,
+      "median": 121.21212121212122,
+      "p75": 148.14814814814815,
+      "p95": 181.8181818181818,
+      "min": 65.93406593406593,
+      "max": 200.0
+    },
+    "knee_rom_asymmetry_pct": {
+      "mean": 21.045055269271238,
+      "std": 22.821078861672838,
+      "p5": 0.8685794862864972,
+      "p25": 4.933856528515412,
+      "median": 12.537010749883564,
+      "p75": 29.395524194098368,
+      "p95": 70.01278065140623,
+      "min": 0.0046079374001649,
+      "max": 153.18652024370536
+    },
+    "step_time_asymmetry_pct": {
+      "mean": 21.831845209013743,
+      "std": 19.653850663659483,
+      "p5": 0.0,
+      "p25": 5.633802816901413,
+      "median": 16.513761467889903,
+      "p75": 34.247104247104254,
+      "p95": 61.60921197268123,
+      "min": 0.0,
+      "max": 90.26548672566372
+    },
+    "trunk_lean_deg": {
+      "mean": 4.8591465540934,
+      "std": 4.050159113498135,
+      "p5": 0.8624260327559762,
+      "p25": 1.8788203165819781,
+      "median": 3.632531310304349,
+      "p75": 5.878472665051061,
+      "p95": 14.086737457455605,
+      "min": 0.0267994886502227,
+      "max": 25.87073924406091
+    }
+  },
+  "scaler": {
+    "means": {
+      "right_knee_rom_deg": 67.74037387554596,
+      "left_knee_rom_deg": 62.3356927753516,
+      "right_hip_rom_deg": 70.59556842964739,
+      "left_hip_rom_deg": 77.26169388177941,
+      "step_duration_sec": 0.5009074259074259,
+      "stride_duration_sec": 1.0018148518148517,
+      "cadence_steps_min": 126.17159729510277,
+      "knee_rom_asymmetry_pct": 21.045055269271238,
+      "step_time_asymmetry_pct": 20.593969572967936,
+      "trunk_lean_deg": 4.8591465540934
+    },
+    "scales": {
+      "right_knee_rom_deg": 22.440710972317056,
+      "left_knee_rom_deg": 18.851232174322,
+      "right_hip_rom_deg": 22.114377482032918,
+      "left_hip_rom_deg": 26.486303731450757,
+      "step_duration_sec": 0.11393939282017959,
+      "stride_duration_sec": 0.22787878564035915,
+      "cadence_steps_min": 29.08846906183736,
+      "knee_rom_asymmetry_pct": 22.821078861672838,
+      "step_time_asymmetry_pct": 17.361242522066412,
+      "trunk_lean_deg": 4.050159113498135
+    },
+    "medians": {
+      "right_knee_rom_deg": 59.87641427981053,
+      "left_knee_rom_deg": 58.44567166400248,
+      "right_hip_rom_deg": 72.88731915783202,
+      "left_hip_rom_deg": 78.86198782094841,
+      "step_duration_sec": 0.495,
+      "stride_duration_sec": 0.99,
+      "cadence_steps_min": 121.21212121212122,
+      "knee_rom_asymmetry_pct": 12.537010749883564,
+      "step_time_asymmetry_pct": 16.513761467889903,
+      "trunk_lean_deg": 3.632531310304349
+    }
+  },
+  "score_distribution": {
+    "min": -0.0002336294852581707,
+    "max": 0.09062085886612345,
+    "mean": 0.047070309707371256,
+    "std": 0.023703681463903687
+  },
+  "reference_participants": [
+    {
+      "participant_id": 1,
+      "mean_biomechanical_score": 0.035764854639977146,
+      "abnormal_trial_rate": 0.2,
+      "screening_score": 69.38775510204081,
+      "trials": 65
+    },
+    {
+      "participant_id": 2,
+      "mean_biomechanical_score": 0.032827679840099176,
+      "abnormal_trial_rate": 0.3064516129032258,
+      "screening_score": 73.87755102040816,
+      "trials": 62
+    },
+    {
+      "participant_id": 3,
+      "mean_biomechanical_score": 0.012949520762702843,
+      "abnormal_trial_rate": 0.4,
+      "screening_score": 91.0204081632653,
+      "trials": 60
+    },
+    {
+      "participant_id": 4,
+      "mean_biomechanical_score": 0.05691647936392276,
+      "abnormal_trial_rate": 0.08196721311475409,
+      "screening_score": 31.42857142857143,
+      "trials": 61
+    },
+    {
+      "participant_id": 5,
+      "mean_biomechanical_score": 0.019390086839358268,
+      "abnormal_trial_rate": 0.3870967741935484,
+      "screening_score": 86.12244897959184,
+      "trials": 62
+    },
+    {
+      "participant_id": 6,
+      "mean_biomechanical_score": 0.014451520342616151,
+      "abnormal_trial_rate": 0.34328358208955223,
+      "screening_score": 87.75510204081633,
+      "trials": 67
+    },
+    {
+      "participant_id": 7,
+      "mean_biomechanical_score": 0.03812237508535166,
+      "abnormal_trial_rate": 0.1935483870967742,
+      "screening_score": 63.87755102040816,
+      "trials": 62
+    },
+    {
+      "participant_id": 8,
+      "mean_biomechanical_score": 0.01542783650235781,
+      "abnormal_trial_rate": 0.38333333333333336,
+      "screening_score": 86.93877551020408,
+      "trials": 60
+    },
+    {
+      "participant_id": 9,
+      "mean_biomechanical_score": 0.0381657220655481,
+      "abnormal_trial_rate": 0.18333333333333332,
+      "screening_score": 61.22448979591836,
+      "trials": 60
+    },
+    {
+      "participant_id": 10,
+      "mean_biomechanical_score": 0.05377272788622266,
+      "abnormal_trial_rate": 0.03125,
+      "screening_score": 32.857142857142854,
+      "trials": 64
+    },
+    {
+      "participant_id": 12,
+      "mean_biomechanical_score": 0.0242330866414737,
+      "abnormal_trial_rate": 0.23333333333333334,
+      "screening_score": 76.3265306122449,
+      "trials": 60
+    },
+    {
+      "participant_id": 13,
+      "mean_biomechanical_score": 0.049244089441790075,
+      "abnormal_trial_rate": 0.13333333333333333,
+      "screening_score": 46.734693877551024,
+      "trials": 60
+    },
+    {
+      "participant_id": 15,
+      "mean_biomechanical_score": 0.02370751230153073,
+      "abnormal_trial_rate": 0.234375,
+      "screening_score": 78.3673469387755,
+      "trials": 64
+    },
+    {
+      "participant_id": 16,
+      "mean_biomechanical_score": 0.047147686016085905,
+      "abnormal_trial_rate": 0.109375,
+      "screening_score": 45.91836734693877,
+      "trials": 64
+    },
+    {
+      "participant_id": 17,
+      "mean_biomechanical_score": -0.0002336294852581707,
+      "abnormal_trial_rate": 0.43333333333333335,
+      "screening_score": 97.3469387755102,
+      "trials": 60
+    },
+    {
+      "participant_id": 18,
+      "mean_biomechanical_score": 0.037165825306356426,
+      "abnormal_trial_rate": 0.14754098360655737,
+      "screening_score": 62.244897959183675,
+      "trials": 61
+    },
+    {
+      "participant_id": 19,
+      "mean_biomechanical_score": 0.04235387728258476,
+      "abnormal_trial_rate": 0.12903225806451613,
+      "screening_score": 53.26530612244897,
+      "trials": 62
+    },
+    {
+      "participant_id": 20,
+      "mean_biomechanical_score": 0.036970154006248396,
+      "abnormal_trial_rate": 0.19047619047619047,
+      "screening_score": 66.12244897959184,
+      "trials": 63
+    },
+    {
+      "participant_id": 21,
+      "mean_biomechanical_score": 0.012732757861064144,
+      "abnormal_trial_rate": 0.32786885245901637,
+      "screening_score": 89.38775510204083,
+      "trials": 61
+    },
+    {
+      "participant_id": 22,
+      "mean_biomechanical_score": 0.04767632173818624,
+      "abnormal_trial_rate": 0.11290322580645161,
+      "screening_score": 46.326530612244895,
+      "trials": 62
+    },
+    {
+      "participant_id": 23,
+      "mean_biomechanical_score": 0.006414527404227031,
+      "abnormal_trial_rate": 0.5245901639344263,
+      "screening_score": 95.71428571428571,
+      "trials": 61
+    },
+    {
+      "participant_id": 24,
+      "mean_biomechanical_score": 0.0807179964365658,
+      "abnormal_trial_rate": 0.03333333333333333,
+      "screening_score": 11.836734693877549,
+      "trials": 60
+    },
+    {
+      "participant_id": 25,
+      "mean_biomechanical_score": 0.08907097323875378,
+      "abnormal_trial_rate": 0.0,
+      "screening_score": 3.877551020408165,
+      "trials": 77
+    },
+    {
+      "participant_id": 26,
+      "mean_biomechanical_score": 0.06814882801193357,
+      "abnormal_trial_rate": 0.08333333333333333,
+      "screening_score": 23.46938775510204,
+      "trials": 60
+    },
+    {
+      "participant_id": 27,
+      "mean_biomechanical_score": 0.07282940988135486,
+      "abnormal_trial_rate": 0.03278688524590164,
+      "screening_score": 18.36734693877551,
+      "trials": 61
+    },
+    {
+      "participant_id": 28,
+      "mean_biomechanical_score": 0.0526721187488955,
+      "abnormal_trial_rate": 0.11666666666666667,
+      "screening_score": 44.08163265306122,
+      "trials": 60
+    },
+    {
+      "participant_id": 29,
+      "mean_biomechanical_score": 0.06033597118659139,
+      "abnormal_trial_rate": 0.09836065573770492,
+      "screening_score": 31.83673469387755,
+      "trials": 61
+    },
+    {
+      "participant_id": 30,
+      "mean_biomechanical_score": 0.0676214302571689,
+      "abnormal_trial_rate": 0.07936507936507936,
+      "screening_score": 23.673469387755105,
+      "trials": 63
+    },
+    {
+      "participant_id": 31,
+      "mean_biomechanical_score": 0.032197040416881206,
+      "abnormal_trial_rate": 0.31666666666666665,
+      "screening_score": 75.91836734693877,
+      "trials": 60
+    },
+    {
+      "participant_id": 32,
+      "mean_biomechanical_score": 0.061633304602041944,
+      "abnormal_trial_rate": 0.09230769230769231,
+      "screening_score": 28.36734693877551,
+      "trials": 65
+    },
+    {
+      "participant_id": 33,
+      "mean_biomechanical_score": 0.041562987325883906,
+      "abnormal_trial_rate": 0.22950819672131148,
+      "screening_score": 61.428571428571416,
+      "trials": 61
+    },
+    {
+      "participant_id": 34,
+      "mean_biomechanical_score": 0.021267245380954165,
+      "abnormal_trial_rate": 0.3333333333333333,
+      "screening_score": 82.85714285714285,
+      "trials": 60
+    },
+    {
+      "participant_id": 35,
+      "mean_biomechanical_score": 0.05563699693301382,
+      "abnormal_trial_rate": 0.1111111111111111,
+      "screening_score": 37.142857142857146,
+      "trials": 63
+    },
+    {
+      "participant_id": 36,
+      "mean_biomechanical_score": 0.04034833461560645,
+      "abnormal_trial_rate": 0.2,
+      "screening_score": 62.24489795918367,
+      "trials": 60
+    },
+    {
+      "participant_id": 37,
+      "mean_biomechanical_score": 0.04291345907638736,
+      "abnormal_trial_rate": 0.1746031746031746,
+      "screening_score": 54.28571428571428,
+      "trials": 63
+    },
+    {
+      "participant_id": 38,
+      "mean_biomechanical_score": 0.05526413796690529,
+      "abnormal_trial_rate": 0.1,
+      "screening_score": 36.73469387755102,
+      "trials": 60
+    },
+    {
+      "participant_id": 39,
+      "mean_biomechanical_score": 0.06100814280384807,
+      "abnormal_trial_rate": 0.0625,
+      "screening_score": 26.734693877551017,
+      "trials": 64
+    },
+    {
+      "participant_id": 40,
+      "mean_biomechanical_score": 0.029176330077833372,
+      "abnormal_trial_rate": 0.25,
+      "screening_score": 76.12244897959184,
+      "trials": 60
+    },
+    {
+      "participant_id": 41,
+      "mean_biomechanical_score": 0.04575581566250151,
+      "abnormal_trial_rate": 0.18333333333333332,
+      "screening_score": 54.08163265306122,
+      "trials": 60
+    },
+    {
+      "participant_id": 42,
+      "mean_biomechanical_score": 0.09062085886612345,
+      "abnormal_trial_rate": 0.0,
+      "screening_score": 2.4489795918367347,
+      "trials": 64
+    },
+    {
+      "participant_id": 43,
+      "mean_biomechanical_score": 0.07307249540418342,
+      "abnormal_trial_rate": 0.07352941176470588,
+      "screening_score": 18.775510204081627,
+      "trials": 68
+    },
+    {
+      "participant_id": 44,
+      "mean_biomechanical_score": 0.06436352567954082,
+      "abnormal_trial_rate": 0.1111111111111111,
+      "screening_score": 30.0,
+      "trials": 63
+    },
+    {
+      "participant_id": 45,
+      "mean_biomechanical_score": 0.07591444968204294,
+      "abnormal_trial_rate": 0.031746031746031744,
+      "screening_score": 13.469387755102042,
+      "trials": 63
+    },
+    {
+      "participant_id": 46,
+      "mean_biomechanical_score": 0.0538588739246728,
+      "abnormal_trial_rate": 0.14516129032258066,
+      "screening_score": 43.06122448979592,
+      "trials": 62
+    },
+    {
+      "participant_id": 47,
+      "mean_biomechanical_score": 0.08452841293191543,
+      "abnormal_trial_rate": 0.01639344262295082,
+      "screening_score": 6.530612244897962,
+      "trials": 61
+    },
+    {
+      "participant_id": 48,
+      "mean_biomechanical_score": 0.08164918258430413,
+      "abnormal_trial_rate": 0.016129032258064516,
+      "screening_score": 7.3469387755102,
+      "trials": 62
+    },
+    {
+      "participant_id": 49,
+      "mean_biomechanical_score": 0.07451319472086963,
+      "abnormal_trial_rate": 0.0,
+      "screening_score": 12.448979591836736,
+      "trials": 10
+    },
+    {
+      "participant_id": 50,
+      "mean_biomechanical_score": 0.08042142889665704,
+      "abnormal_trial_rate": 0.0,
+      "screening_score": 9.591836734693878,
+      "trials": 67
+    },
+    {
+      "participant_id": 51,
+      "mean_biomechanical_score": 0.004141218505314865,
+      "abnormal_trial_rate": 0.5,
+      "screening_score": 96.53061224489795,
+      "trials": 64
+    }
+  ]
+}

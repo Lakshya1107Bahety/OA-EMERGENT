@@ -1,0 +1,148 @@
+{
+  "project_name": "JointCare AI - Osteoarthritis Screening Platform",
+  "app_type": "hybrid_fullstack",
+  "archetype": "ORGANIC & EARTHY / HEALTHCARE PRECISION",
+  "target_audience": "Rural Healthcare Workers, Doctors, District Health Admins, and Elderly Patients in North East India",
+  "theme": {
+    "mode": "light_primary_with_high_contrast_accessibility",
+    "primary_tone": "Soft Emerald & Deep Jade Healthcare",
+    "background_feeling": "Warm Bone Sand & Clinical Mint Surface"
+  },
+  "typography": {
+    "heading_font": "Outfit, sans-serif",
+    "body_font": "Plus Jakarta Sans, sans-serif",
+    "mono_font": "JetBrains Mono, monospace",
+    "rules": {
+      "h1_hero": "text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900",
+      "h2_section": "text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight text-slate-800",
+      "h3_card": "text-xl sm:text-2xl font-semibold text-slate-800",
+      "body_text": "text-base leading-relaxed text-slate-700",
+      "elderly_mode": "Increases base text sizes by 1.2x (text-lg body, text-3xl headings) with elevated contrast (APCA compliant AAA)"
+    }
+  },
+  "colors": {
+    "primary": {
+      "default": "#10B981",
+      "dark": "#047857",
+      "light": "#D1FAE5",
+      "surface": "#ECFDF5"
+    },
+    "secondary": {
+      "default": "#0F766E",
+      "hover": "#115E59"
+    },
+    "neutral": {
+      "background": "#FBFBFA",
+      "card": "#FFFFFF",
+      "border": "#E2E8F0",
+      "text_dark": "#0F172A",
+      "text_muted": "#64748B"
+    },
+    "risk_indicators": {
+      "low": "#10B981",
+      "moderate": "#F59E0B",
+      "high": "#F97316",
+      "severe": "#EF4444"
+    },
+    "forbidden_colors": [
+      "#7351B7",
+      "#1B93A4"
+    ]
+  },
+  "visual_enhancers": {
+    "card_style": "bg-white rounded-2xl border border-emerald-900/10 shadow-sm hover:shadow-md transition-all duration-200",
+    "glass_nav": "bg-white/85 backdrop-blur-md border-b border-emerald-900/10 sticky top-0 z-50",
+    "sensor_glow": "shadow-[0_0_15px_rgba(16,185,129,0.25)] border-emerald-500",
+    "disclaimer_banner": "bg-amber-50 border-l-4 border-amber-500 p-4 text-amber-900 font-medium text-sm rounded-r-xl"
+  },
+  "key_components_to_build": [
+    {
+      "name": "NavigationHeader",
+      "path": "src/components/NavigationHeader.js",
+      "description": "Sticky navigation with role indicator (Healthcare Worker / Doctor / Admin), Language toggle (English / Assamese / Bengali), Sync Status Badge, and Navigation links."
+    },
+    {
+      "name": "LandingPage",
+      "path": "src/components/LandingPage.js",
+      "description": "Hero section featuring North East India health outreach story, MPU6050 IoT sensor explainer, interactive trial demo link, and key impact statistics."
+    },
+    {
+      "name": "SensorDashboard",
+      "path": "src/components/SensorDashboard.js",
+      "description": "Real-time MPU6050 sensor stream (Accelerometer AccX, AccY, AccZ and Gyroscope GyroX, GyroY, GyroZ), live chart telemetry, signal quality indicator, WebSocket connection toggle, and zero-calibration trigger."
+    },
+    {
+      "name": "AIPredictionScreen",
+      "path": "src/components/AIPredictionScreen.js",
+      "description": "Interactive AI analysis with animated circular probability progress gauge, Knee Stability Score, Movement Symmetry %, Balance Index, contributing sensor factor breakdown, and mandatory disclaimer 'AI-assisted screening, not a medical diagnosis'."
+    },
+    {
+      "name": "PatientRegistration",
+      "path": "src/components/PatientRegistration.js",
+      "description": "Accessible patient registration form with regional village selector (Guwahati, Dibrugarh, Silchar, Tezpur, Jorhat, etc.), mobility assessment checklist, and medical history."
+    },
+    {
+      "name": "PatientRecords",
+      "path": "src/components/PatientRecords.js",
+      "description": "Patient directory with search, risk filter tabs, screening history cards, doctor review status, and PDF report generator with embedded verification QR code."
+    },
+    {
+      "name": "DoctorReview",
+      "path": "src/components/DoctorReview.js",
+      "description": "Doctor portal for reviewing flagged high-risk OA cases, appending digital clinical notes, confirming or overriding risk tier, and prescribing physiotherapy protocols."
+    },
+    {
+      "name": "AnalyticsDashboard",
+      "path": "src/components/AnalyticsDashboard.js",
+      "description": "Recharts data visualizations for Total Patients, High-Risk Cohorts, Monthly Screening Trends, Age Distribution, Village-wise Case Density, and Knee Stability averages."
+    },
+    {
+      "name": "AwarenessHub",
+      "path": "src/components/AwarenessHub.js",
+      "description": "Multilingual educational resource center with knee exercise animations, early OA sign guide, diet recommendations, and downloadable PDF pamphlets."
+    },
+    {
+      "name": "OfflineSyncManager",
+      "path": "src/components/OfflineSyncManager.js",
+      "description": "IndexedDB offline queue manager showing pending local records, network connectivity monitor, auto-sync toggle, and elderly accessibility contrast/font size controls."
+    }
+  ],
+  "image_urls": [
+    {
+      "category": "hero_and_outreach",
+      "url": "https://images.pexels.com/photos/39192345/pexels-photo-39192345.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Rural doctor examining elderly patient in health clinic"
+    },
+    {
+      "category": "joint_examination",
+      "url": "https://images.pexels.com/photos/8943327/pexels-photo-8943327.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Healthcare worker conducting physical joint evaluation"
+    },
+    {
+      "category": "physiotherapy_sensor_tech",
+      "url": "https://images.pexels.com/photos/30483052/pexels-photo-30483052.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Knee joint sensor therapy pads during mobility assessment"
+    },
+    {
+      "category": "knee_therapy",
+      "url": "https://images.pexels.com/photos/20860607/pexels-photo-20860607.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Physiotherapy joint examination and leg stability test"
+    }
+  ],
+  "accessibility_and_elderly_rules": {
+    "font_size_multiplier": "Support global toggle for normal (100%) and large (125%) text sizing",
+    "touch_targets": "Minimum 48px height on all buttons and interactive controls for healthcare workers in remote conditions",
+    "color_contrast": "Ensure minimum 4.5:1 ratio for standard text, 3:1 for large headers",
+    "disclaimer": "Every AI prediction screen MUST include prominent disclaimer: 'AI-assisted screening, not a medical diagnosis'"
+  },
+  "testing_requirements": {
+    "data_testid_convention": "All buttons, inputs, tabs, risk tags, and cards must include role-based data-testid (e.g., data-testid='start-screening-button', data-testid='patient-search-input')"
+  },
+  "instructions_to_main_agent": [
+    "Follow this exact color theme and typography structure across all files.",
+    "Implement full mock sensor data generation when live WebSocket is offline, with real-time chart updates in SensorDashboard.",
+    "Ensure every route/tab includes proper loading states, interactive micro-animations using Framer Motion or Tailwind transitions, and Sonner toast notifications.",
+    "Do not use dark gradients or full screen dark blankets. Keep the surface warm, clinical, light, and approachable.",
+    "All interactive components MUST feature data-testid attributes."
+  ]
+}
