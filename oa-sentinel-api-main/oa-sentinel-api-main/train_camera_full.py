@@ -52,31 +52,58 @@ def train_and_calibrate():
 
     # 1. Train Biomechanical Isolation Forest Model
     X = df_trials[FEATURES]
+
+    # FIX: contamination=0.05 (was 'auto' which resolved to 17.4% anomaly rate)
+    # 'auto' uses an internal sklearn heuristic that flags too many healthy trials
+    # as anomalous, making ANY live input score as HIGH RISK.
+    # 5% is the appropriate clinical outlier rate for a healthy reference cohort.
+    n_samples = len(df_trials)
+    max_samples = min(256, n_samples)
+
     pipeline = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
         ("scaler", StandardScaler()),
-        ("model", IsolationForest(n_estimators=250, contamination="auto", random_state=42))
+        ("model", IsolationForest(
+            n_estimators=200,
+            contamination=0.05,
+            max_samples=max_samples,
+            random_state=42
+        ))
     ])
     
-    print("Fitting model...")
+    print(f"Fitting model (contamination=0.05, max_samples={max_samples})...")
     pipeline.fit(X)
     
     # 2. Predict on all trials
     preds = pipeline.predict(X)
     scores = pipeline.decision_function(X)
+
+    effective_anomaly_rate = (preds == -1).mean() * 100
+    print(f"Effective anomaly rate on training data: {effective_anomaly_rate:.1f}% (target ~5%)")
+    print(f"Score range: min={scores.min():.4f}, max={scores.max():.4f}, mean={scores.mean():.4f}")
     
     df_trials["biomechanical_prediction"] = preds
     df_trials["biomechanical_score"] = scores
+
+    # Compute per-feature clipping bounds (P1..P99) from training distribution.
+    # These are stored in the reference JSON so screen_trials() can winsorize
+    # OOD webcam inputs (e.g. frontal-view ROM underestimation) before scoring.
+    clip_bounds = {}
+    for f in FEATURES:
+        vals = df_trials[f].dropna().values
+        clip_bounds[f] = {
+            "p1":  float(np.percentile(vals, 1)),
+            "p5":  float(np.percentile(vals, 5)),
+            "p95": float(np.percentile(vals, 95)),
+            "p99": float(np.percentile(vals, 99)),
+        }
+        print(f"  {f}: clip [{clip_bounds[f]['p1']:.2f} .. {clip_bounds[f]['p99']:.2f}]")
     
-    # Save camera_results.csv
+    # Save camera_results.csv and model pkl
     df_trials.to_csv(RESULTS_FILE, index=False)
     print(f"Saved predictions to {RESULTS_FILE}")
-    
-    # Save model pkl
     joblib.dump(pipeline, MODEL_PKL)
     print(f"Saved model pipeline to {MODEL_PKL}")
-    
-    # 3. Compute Per-Participant Biomechanical Metrics
     patient_stats = (
         df_trials.groupby("participant_id")
         .agg(
@@ -137,6 +164,11 @@ def train_and_calibrate():
         "n_reference_participants": int(len(patient_stats)),
         "n_total_trials": int(len(df_trials)),
         "total_participants_enrolled": int(len(df_participants)),
+        "model_config": {
+            "n_estimators": 200,
+            "contamination": 0.05,
+            "max_samples": max_samples,
+        },
         "method": {
             "mean_biomechanical_score_weight": 0.70,
             "abnormal_trial_rate_weight": 0.30,
@@ -144,10 +176,11 @@ def train_and_calibrate():
             "moderate_upper_percentile": 97.5
         },
         "thresholds": {
-            "p90": p90,
+            "p90":   p90,
             "p97_5": p97_5
         },
         "features": FEATURES,
+        "clip_bounds": clip_bounds,
         "feature_distributions": feature_distributions,
         "scaler": {
             "means": scaler_means,
@@ -159,6 +192,11 @@ def train_and_calibrate():
             "max": float(np.max(score_vals)),
             "mean": float(np.mean(score_vals)),
             "std": float(np.std(score_vals))
+        },
+        "trial_scores": [round(float(s), 5) for s in np.sort(scores)],
+        "trial_score_percentiles": {
+            f"p{p}".replace(".", "_"): float(np.percentile(scores, p))
+            for p in [0.5, 1, 2.5, 5, 10, 25, 50, 75, 90, 95, 97.5, 99]
         },
         "reference_participants": patient_stats[
             ["participant_id", "mean_biomechanical_score", "abnormal_trial_rate", "screening_score", "trials"]

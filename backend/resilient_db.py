@@ -213,14 +213,27 @@ def init_database(mongo_url: str = None, db_name: str = "jointcare_ai"):
     mongo_url = mongo_url or os.environ.get("MONGO_URL", "mongodb://localhost:27017")
     try:
         from pymongo import MongoClient
-        logger.info(f"Testing MongoDB connection at {mongo_url}...")
-        sync_client = MongoClient(mongo_url, serverSelectionTimeoutMS=1200)
+        import certifi
+        import re
+
+        # Mask password in log output
+        safe_url = re.sub(r":([^:@]+)@", ":****@", mongo_url)
+        logger.info(f"Testing MongoDB connection at {safe_url}...")
+
+        # Use 5000ms timeout for Atlas / cloud connections and certifi for Windows SSL support
+        client_kwargs = {
+            "serverSelectionTimeoutMS": 5000,
+            "tlsCAFile": certifi.where() if "mongodb+srv://" in mongo_url or "ssl=true" in mongo_url.lower() else None
+        }
+        client_kwargs = {k: v for k, v in client_kwargs.items() if v is not None}
+
+        sync_client = MongoClient(mongo_url, **client_kwargs)
         sync_client.admin.command('ping')
         sync_client.close()
 
         # Connect with Motor
         from motor.motor_asyncio import AsyncIOMotorClient
-        motor_client = AsyncIOMotorClient(mongo_url)
+        motor_client = AsyncIOMotorClient(mongo_url, **client_kwargs)
         real_db = motor_client[db_name]
         logger.info(f"Successfully connected to live MongoDB: {db_name}")
         return motor_client, real_db, False

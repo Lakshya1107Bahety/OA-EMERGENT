@@ -20,6 +20,7 @@ import io
 import csv
 import json
 import httpx
+import math
 
 import prediction_engine
 
@@ -32,6 +33,17 @@ client, db, is_fallback = init_database(mongo_url, db_name)
 
 app = FastAPI(title="JointCare AI")
 api = APIRouter(prefix="/api")
+
+@app.get("/")
+def root():
+    return {
+        "status": "online",
+        "service": "JointCare OA Sentinel Backend",
+        "dataset_loaded": len(_DATASET_ROWS) > 0,
+        "dataset_trials": len(_DATASET_ROWS),
+        "docs_url": "/docs",
+        "api_prefix": "/api"
+    }
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("jointcare")
@@ -98,12 +110,30 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
+async def get_optional_user(request: Request) -> Optional[dict]:
+    token = None
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:]
+    if not token:
+        token = request.cookies.get("access_token")
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+        return clean(user) if user else None
+    except Exception:
+        return None
+
+
 def require_roles(*roles):
     async def checker(user: dict = Depends(get_current_user)):
         if user["role"] not in roles:
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return user
     return checker
+
 
 
 # ---------------------------------------------------------------- models
@@ -312,9 +342,189 @@ async def list_movement_assessments(patient_id: Optional[str] = None, user: dict
     return [clean(i) for i in items]
 
 
-# ---------------------------------------------------------------- dataset (placeholder)
+# ---------------------------------------------------------------- dataset
+# Auto-load the bundled 3003-trial clinical dataset with demographics at startup
+_BUNDLED_CSV = ROOT_DIR / "camera_features_demographics.csv"
+if not _BUNDLED_CSV.exists():
+    _BUNDLED_CSV = ROOT_DIR / "camera_features.csv"
+if not _BUNDLED_CSV.exists():
+    _BUNDLED_CSV = ROOT_DIR.parent / "oa-sentinel-api-main" / "oa-sentinel-api-main" / "camera_features.csv"
+
+_DATASET_ROWS: List[Dict[str, Any]] = []
+_AGE_STD: float = 12.0
+_BMI_STD: float = 4.5
+
+def _load_bundled_dataset():
+    global _DATASET_ROWS, _AGE_STD, _BMI_STD
+    if _BUNDLED_CSV.exists():
+        try:
+            with open(_BUNDLED_CSV, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                _DATASET_ROWS = []
+                for r in reader:
+                    parsed = {}
+                    for k, v in r.items():
+                        try:
+                            parsed[k] = float(v)
+                        except (ValueError, TypeError):
+                            parsed[k] = v
+                    _DATASET_ROWS.append(parsed)
+            logger.info(f"Loaded bundled dataset: {len(_DATASET_ROWS)} trials from {_BUNDLED_CSV.name}")
+
+            ages = [r["Age"] for r in _DATASET_ROWS if isinstance(r.get("Age"), (int, float))]
+            bmis = [r["BMI"] for r in _DATASET_ROWS if isinstance(r.get("BMI"), (int, float))]
+            if ages and len(ages) > 1:
+                m_age = sum(ages) / len(ages)
+                _AGE_STD = max(1.0, math.sqrt(sum((x - m_age) ** 2 for x in ages) / (len(ages) - 1)))
+            if bmis and len(bmis) > 1:
+                m_bmi = sum(bmis) / len(bmis)
+                _BMI_STD = max(1.0, math.sqrt(sum((x - m_bmi) ** 2 for x in bmis) / (len(bmis) - 1)))
+        except Exception as e:
+            logger.warning(f"Could not load bundled dataset: {e}")
+
+_load_bundled_dataset()
+
+# Numeric biomechanical feature keys used for nearest-neighbor matching
+_BIOM_FEATURES = [
+    "right_knee_rom_deg", "left_knee_rom_deg",
+    "right_hip_rom_deg", "left_hip_rom_deg",
+    "cadence_steps_min", "knee_rom_asymmetry_pct",
+    "step_time_asymmetry_pct", "trunk_lean_deg",
+    "step_duration_sec", "stride_duration_sec",
+]
+
+def _find_closest_trial(age: float, bmi: float, gender: Optional[str] = None, partial_metrics: dict = None) -> dict:
+    """
+    Find the closest real trial from the 3003-trial dataset using
+    weighted nearest-neighbor distance on patient age, BMI, gender, and any observed movement features.
+    Returns a dict with real biomechanical metric values strictly from the clinical dataset.
+    """
+    rows = _DATASET_ROWS
+    if not rows:
+        return {}
+
+    g_char = gender.strip().upper()[0] if gender else None
+    age_std = _AGE_STD
+    bmi_std = _BMI_STD
+
+    best_row = None
+    best_dist = float("inf")
+
+    for row in rows:
+        r_age = float(row.get("Age", 50.0))
+        r_bmi = float(row.get("BMI", 25.0))
+        r_gender = str(row.get("Gender", "")).strip().upper()
+
+        # 1. Demographic distance (Age + BMI + Gender penalty)
+        d_age = ((r_age - age) / age_std) ** 2
+        d_bmi = ((r_bmi - bmi) / bmi_std) ** 2
+        d_gender = 2.5 if (g_char and r_gender and r_gender[0] != g_char) else 0.0
+
+        dist = d_age * 1.5 + d_bmi * 1.5 + d_gender
+
+        # 2. Biomechanical distance from test analysis (if partial movement metrics were captured)
+        if partial_metrics:
+            for f in _BIOM_FEATURES:
+                if f in partial_metrics and partial_metrics[f] is not None:
+                    p_val = float(partial_metrics[f])
+                    # Ignore known fallback / default constants (e.g. 55.0, 12.0)
+                    if p_val not in (55.0, 12.0) and f in row and isinstance(row[f], (int, float)):
+                        feat_scale = 20.0 if "rom" in f else (30.0 if "cadence" in f else 5.0)
+                        dist += 1.5 * (((float(row[f]) - p_val) / feat_scale) ** 2)
+
+        if dist < best_dist:
+            best_dist = dist
+            best_row = row
+
+    if not best_row:
+        return {}
+
+    step_dur = round(float(best_row.get("step_duration_sec", 0.52)), 3)
+    duration_s = round(float(best_row.get("duration_sec", 4.5)), 2)
+
+    return {
+        "right_knee_rom_deg":     round(float(best_row.get("right_knee_rom_deg", 55.0)), 1),
+        "left_knee_rom_deg":      round(float(best_row.get("left_knee_rom_deg", 55.0)), 1),
+        "right_hip_rom_deg":      round(float(best_row.get("right_hip_rom_deg", 38.0)), 1),
+        "left_hip_rom_deg":       round(float(best_row.get("left_hip_rom_deg", 38.0)), 1),
+        "step_duration_sec":      step_dur,
+        "stride_duration_sec":    round(float(best_row.get("stride_duration_sec", 1.04)), 3),
+        "cadence_steps_min":      round(float(best_row.get("cadence_steps_min", 115.0)), 1),
+        "knee_rom_asymmetry_pct": round(float(best_row.get("knee_rom_asymmetry_pct", 8.0)), 1),
+        "step_time_asymmetry_pct":round(float(best_row.get("step_time_asymmetry_pct", 12.0)), 1),
+        "trunk_lean_deg":         round(float(best_row.get("trunk_lean_deg", 3.2)), 2),
+        "walking_velocity":       round(float(5.0 / max(0.1, duration_s)), 2),
+        "stance_time":            round(step_dur * 0.62, 2),
+        "swing_time":             round(step_dur * 0.38, 2),
+        "frames_captured":        int(best_row.get("n_frames", 120)),
+        "duration_sec":           duration_s,
+        "_matched_participant":   int(best_row.get("participant_id", 0)),
+        "_matched_trial":         str(best_row.get("trial", "")),
+        "_matched_age":           float(best_row.get("Age", age)),
+        "_matched_bmi":           float(best_row.get("BMI", bmi)),
+        "_matched_gender":        str(best_row.get("Gender", "")),
+        "_match_distance":        round(best_dist, 4),
+        "_dataset_size":          len(rows),
+    }
+
+
+class DatasetMatchInput(BaseModel):
+    age: float = 50.0
+    bmi: float = 25.0
+    gender: Optional[str] = None
+    sex: Optional[str] = None
+    partial_metrics: Optional[Dict[str, float]] = None
+
+
+@api.post("/dataset/match")
+async def dataset_match(body: DatasetMatchInput, user: Optional[dict] = Depends(get_optional_user)):
+    """
+    Given patient age + BMI (and optionally partial real camera metrics),
+    return the closest real biomechanical trial strictly from the 3003-trial dataset.
+    """
+    gender = body.gender or body.sex
+    matched = _find_closest_trial(body.age, body.bmi, gender, body.partial_metrics)
+    if not matched:
+        raise HTTPException(status_code=503, detail="Dataset not loaded. Upload camera_features.csv first.")
+    return {
+        "matched": True,
+        "dataset_size": matched.pop("_dataset_size", len(_DATASET_ROWS)),
+        "matched_participant": matched.get("_matched_participant"),
+        "matched_trial": matched.get("_matched_trial"),
+        "matched_age": matched.get("_matched_age"),
+        "matched_bmi": matched.get("_matched_bmi"),
+        "matched_gender": matched.get("_matched_gender"),
+        "match_distance": matched.get("_match_distance"),
+        "biomechanical_metrics": matched,
+    }
+
+
+@api.get("/dataset/match")
+async def dataset_match_info(age: float = 50.0, bmi: float = 25.0, gender: Optional[str] = None):
+    """
+    GET helper: test closest match directly from browser URL query params
+    e.g. /api/dataset/match?age=48&bmi=24.5&gender=Female
+    """
+    matched = _find_closest_trial(age, bmi, gender)
+    if not matched:
+        raise HTTPException(status_code=503, detail="Dataset not loaded.")
+    return {
+        "info": "This endpoint accepts POST JSON with {age, bmi, gender, partial_metrics}. Showing sample match below:",
+        "matched": True,
+        "dataset_size": len(_DATASET_ROWS),
+        "matched_participant": matched.get("_matched_participant"),
+        "matched_trial": matched.get("_matched_trial"),
+        "matched_age": matched.get("_matched_age"),
+        "matched_bmi": matched.get("_matched_bmi"),
+        "matched_gender": matched.get("_matched_gender"),
+        "biomechanical_metrics": matched,
+    }
+
+
+
 @api.post("/dataset/upload", dependencies=[Depends(require_roles("admin", "doctor"))])
 async def upload_dataset(file: UploadFile = File(...)):
+    global _DATASET_ROWS
     content = await file.read()
     rows: List[Dict[str, Any]] = []
     try:
@@ -327,6 +537,7 @@ async def upload_dataset(file: UploadFile = File(...)):
                              for k, v in r.items()})
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not parse dataset: {e}")
+    _DATASET_ROWS = rows  # update in-memory cache
     await db.datasets.delete_many({})
     await db.datasets.insert_one({"filename": file.filename, "rows": rows,
                                   "uploaded_at": now_iso(), "row_count": len(rows)})
@@ -335,10 +546,12 @@ async def upload_dataset(file: UploadFile = File(...)):
 
 @api.get("/dataset/info")
 async def dataset_info(user: dict = Depends(get_current_user)):
-    ds = await db.datasets.find_one({}, sort=[("uploaded_at", -1)])
-    if not ds:
-        return {"loaded": False}
-    return {"loaded": True, "filename": ds["filename"], "row_count": ds["row_count"], "uploaded_at": ds["uploaded_at"]}
+    return {
+        "loaded": len(_DATASET_ROWS) > 0,
+        "row_count": len(_DATASET_ROWS),
+        "source": "bundled_csv" if _BUNDLED_CSV.exists() else "uploaded",
+    }
+
 
 
 # ---------------------------------------------------------------- IMU 10-second sessions

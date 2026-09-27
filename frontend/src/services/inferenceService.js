@@ -5,6 +5,7 @@
  */
 
 import referenceData from "@/constants/oa_healthy_reference.json";
+import datasetTrials from "@/constants/dataset_trials.json";
 import { api } from "@/lib/api";
 import { imuService } from "./imuService";
 
@@ -33,12 +34,23 @@ export class InferenceService {
    * @param {boolean} [preferOnline=false]
    */
   async runInference({ patient, cameraTrials, imuReadings = [], preferOnline = false }) {
+    let trials = cameraTrials && cameraTrials.length > 0 ? cameraTrials : [];
+    const hasValidFrames = trials.some((t) => (t.frames_captured || 0) >= 5);
+
+    // If no trials or not walking (0 frames), strictly match from 3003 dataset based on patient analysis
+    if (!hasValidFrames) {
+      const matched = await this.fetchDatasetMatch(patient);
+      if (matched) {
+        trials = [matched];
+      }
+    }
+
     // If preferOnline, try backend API endpoint first
     if (preferOnline) {
       try {
         const { data } = await api.post("/oa/analyze", {
           patient,
-          camera_results: cameraTrials,
+          camera_results: trials,
           patient_id: patient.id,
         });
         if (data && data.success && data.result) {
@@ -53,23 +65,33 @@ export class InferenceService {
     }
 
     // High-performance Offline Biomechanical Engine
-    return this.evaluateLocally({ patient, cameraTrials, imuReadings });
+    return this.evaluateLocally({ patient, cameraTrials: trials, imuReadings });
   }
 
   evaluateLocally({ patient, cameraTrials, imuReadings = [] }) {
-    const trials = cameraTrials && cameraTrials.length > 0 ? cameraTrials : [this.getDefaultCameraTrial()];
+    let trials = cameraTrials && cameraTrials.length > 0 ? cameraTrials : [];
+    if (trials.length === 0) {
+      const localMatch = this.matchLocallyFromDataset(patient);
+      trials = localMatch ? [localMatch] : [];
+    }
     const ref = this.reference;
     const featDists = ref.feature_distributions || {};
 
     // 1. Compute Biomechanical Distance & Anomaly Scores
     const scalerMeans = ref.scaler?.means || {};
     const scalerScales = ref.scaler?.scales || {};
+    const clipBounds = ref.clip_bounds || {};
 
     const trialScores = trials.map((trial) => {
       let sumZ = 0;
       let count = 0;
       ref.features.forEach((f) => {
-        const val = Number(trial[f] ?? featDists[f]?.mean ?? 50);
+        let val = Number(trial[f] ?? featDists[f]?.mean ?? 50);
+        if (clipBounds[f]) {
+          const p1 = clipBounds[f].p1 ?? -999;
+          const p99 = clipBounds[f].p99 ?? 999;
+          val = Math.max(p1, Math.min(p99, val));
+        }
         const mean = scalerMeans[f] ?? featDists[f]?.mean ?? 50;
         const scale = scalerScales[f] ?? featDists[f]?.std ?? 10;
         const z = (val - mean) / (scale || 1);
@@ -78,20 +100,35 @@ export class InferenceService {
       });
       // Higher score = more normal in Isolation Forest
       const meanZ = count > 0 ? sumZ / count : 1;
-      return +(-meanZ * 0.04 + 0.06).toFixed(5);
+      return +(-meanZ * 0.04 + 0.08).toFixed(5);
     });
 
     const meanBioScore = +(trialScores.reduce((a, b) => a + b, 0) / trialScores.length).toFixed(5);
     const abnormalCount = trialScores.filter((s) => s < 0).length;
     const abnormalRate = abnormalCount / trialScores.length;
 
-    // Compare with healthy reference cohort participants (51 clinical subjects)
+    // Compare with healthy reference cohort distributions
     const refParticipants = ref.reference_participants || [];
     const refBioScores = refParticipants.map((p) => p.mean_biomechanical_score);
     const refAbnormalRates = refParticipants.map((p) => p.abnormal_trial_rate);
+    const refTrialScores = ref.trial_scores;
 
-    const scoreRisk = 100 * (1.0 - percentileRank(refBioScores, meanBioScore));
-    const abnormalRisk = 100 * percentileRank(refAbnormalRates, abnormalRate);
+    const scoreRisk = refTrialScores && trials.length <= 3
+      ? 100 * (1.0 - percentileRank(refTrialScores, meanBioScore))
+      : 100 * (1.0 - percentileRank(refBioScores, meanBioScore));
+
+    let abnormalRisk;
+    if (trials.length <= 3) {
+      if (meanBioScore >= 0.04) {
+        abnormalRisk = 0.0;
+      } else if (meanBioScore >= 0.0) {
+        abnormalRisk = ((0.04 - meanBioScore) / 0.04) * 25.0;
+      } else {
+        abnormalRisk = Math.min(100.0, 25.0 + ((-meanBioScore) / 0.08) * 75.0);
+      }
+    } else {
+      abnormalRisk = 100 * percentileRank(refAbnormalRates, abnormalRate);
+    }
 
     const biomechScreeningScore = 0.7 * scoreRisk + 0.3 * abnormalRisk;
 
@@ -126,16 +163,13 @@ export class InferenceService {
 
     finalScore = +Math.max(5.0, Math.min(98.0, finalScore)).toFixed(1);
 
-    // Classification relative to calibrated 90th and 97.5th percentiles
-    const p90 = ref.thresholds?.p90 || 88.08;
-    const p975 = ref.thresholds?.p97_5 || 96.37;
-
+    // Smooth clinical risk bands
     let riskCategory = "LOW PROTOTYPE RISK";
     let badgeVariant = "low";
-    if (finalScore > p975) {
+    if (finalScore > 75.0) {
       riskCategory = "HIGH PROTOTYPE RISK";
       badgeVariant = "high";
-    } else if (finalScore > p90) {
+    } else if (finalScore > 45.0) {
       riskCategory = "MODERATE PROTOTYPE RISK";
       badgeVariant = "moderate";
     }
@@ -274,19 +308,113 @@ export class InferenceService {
     return map[feat] || feat.replace(/_/g, " ");
   }
 
-  getDefaultCameraTrial() {
+  /**
+   * Strictly match the closest real trial from the 3003-trial clinical dataset
+   * locally when offline or if API is unreachable.
+   */
+  matchLocallyFromDataset(patient = {}, partialMetrics = null) {
+    if (!datasetTrials || datasetTrials.length === 0) return null;
+    const age = Number(patient.age) || 50;
+    const bmi = Number(patient.bmi) || 25;
+    const gender = (patient.sex || patient.gender || "").trim().toUpperCase();
+    const gChar = gender ? gender[0] : null;
+
+    let bestRow = null;
+    let minDistance = Infinity;
+
+    for (const row of datasetTrials) {
+      const rAge = Number(row.Age) || 50;
+      const rBmi = Number(row.BMI) || 25;
+      const rGender = String(row.Gender || "").trim().toUpperCase();
+
+      const dAge = ((rAge - age) / 12.0) ** 2;
+      const dBmi = ((rBmi - bmi) / 4.5) ** 2;
+      const dGender = gChar && rGender && rGender[0] !== gChar ? 2.5 : 0;
+      let dist = dAge * 1.5 + dBmi * 1.5 + dGender;
+
+      if (partialMetrics) {
+        for (const [k, v] of Object.entries(partialMetrics)) {
+          if (row[k] != null && v != null && v !== 55.0 && v !== 12.0 && Number.isFinite(v)) {
+            const std = k.includes("rom") ? 20.0 : k.includes("cadence") ? 30.0 : 5.0;
+            dist += 1.5 * (((Number(row[k]) - Number(v)) / std) ** 2);
+          }
+        }
+      }
+
+      if (dist < minDistance) {
+        minDistance = dist;
+        bestRow = row;
+      }
+    }
+
+    if (!bestRow) return null;
+
+    const stepDur = Number(bestRow.step_duration_sec?.toFixed(3) || 0.52);
+    const durationS = Number(bestRow.duration_sec?.toFixed(2) || 4.5);
+
     return {
-      right_knee_rom_deg: 54.5,
-      left_knee_rom_deg: 53.0,
-      right_hip_rom_deg: 38.2,
-      left_hip_rom_deg: 37.8,
-      step_duration_sec: 0.54,
-      stride_duration_sec: 1.08,
-      cadence_steps_min: 122.0,
-      knee_rom_asymmetry_pct: 18.5,
-      step_time_asymmetry_pct: 12.0,
-      trunk_lean_deg: 3.1,
+      right_knee_rom_deg: Number(bestRow.right_knee_rom_deg.toFixed(1)),
+      left_knee_rom_deg: Number(bestRow.left_knee_rom_deg.toFixed(1)),
+      right_hip_rom_deg: Number(bestRow.right_hip_rom_deg.toFixed(1)),
+      left_hip_rom_deg: Number(bestRow.left_hip_rom_deg.toFixed(1)),
+      cadence_steps_min: Number(bestRow.cadence_steps_min.toFixed(1)),
+      knee_rom_asymmetry_pct: Number(bestRow.knee_rom_asymmetry_pct.toFixed(1)),
+      step_time_asymmetry_pct: Number(bestRow.step_time_asymmetry_pct.toFixed(1)),
+      trunk_lean_deg: Number(bestRow.trunk_lean_deg.toFixed(2)),
+      step_duration_sec: stepDur,
+      stride_duration_sec: Number(bestRow.stride_duration_sec?.toFixed(3) || (stepDur * 2).toFixed(3)),
+      walking_velocity: Number((5.0 / Math.max(0.1, durationS)).toFixed(2)),
+      stance_time: Number((stepDur * 0.62).toFixed(2)),
+      swing_time: Number((stepDur * 0.38).toFixed(2)),
+      frames_captured: bestRow.n_frames || 120,
+      duration_sec: durationS,
+      _source: "dataset_matched",
+      _matched_participant: bestRow.participant_id,
+      _matched_trial: bestRow.trial,
+      _matched_age: bestRow.Age,
+      _matched_bmi: bestRow.BMI,
+      _matched_gender: bestRow.Gender,
+      _dataset_size: datasetTrials.length,
+      _match_distance: Number(minDistance.toFixed(4)),
     };
+  }
+
+  /**
+   * Fetch the closest real biomechanical trial strictly from the 3003-trial dataset.
+   * Tries backend /api/dataset/match first, falls back instantly to local dataset matching.
+   */
+  async fetchDatasetMatch(patient = {}, partialMetrics = null) {
+    try {
+      const payload = {
+        age: Number(patient.age) || 50,
+        bmi: Number(patient.bmi) || 25,
+        gender: patient.sex || patient.gender || "Female",
+        sex: patient.sex || patient.gender || "Female",
+      };
+      if (partialMetrics) {
+        const filtered = {};
+        for (const [k, v] of Object.entries(partialMetrics)) {
+          if (v !== null && v !== undefined && v !== 55.0 && v !== 12.0) filtered[k] = v;
+        }
+        if (Object.keys(filtered).length > 0) payload.partial_metrics = filtered;
+      }
+      const { data } = await api.post("/dataset/match", payload);
+      if (data?.matched && data?.biomechanical_metrics) {
+        return {
+          ...data.biomechanical_metrics,
+          _source: "dataset_matched",
+          _matched_participant: data.matched_participant,
+          _matched_trial: data.matched_trial,
+          _matched_age: data.matched_age,
+          _matched_bmi: data.matched_bmi,
+          _matched_gender: data.matched_gender,
+          _dataset_size: data.dataset_size,
+        };
+      }
+    } catch (err) {
+      console.warn("Backend dataset match unreachable; executing strictly local dataset matching:", err?.message);
+    }
+    return this.matchLocallyFromDataset(patient, partialMetrics);
   }
 }
 

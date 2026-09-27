@@ -21,15 +21,18 @@ export const POSE_LANDMARKS = {
 };
 
 /**
- * Calculates planar joint angle at point B formed by segment A-B and B-C
+ * Calculates joint angle at point B formed by segment A-B and B-C.
+ * Uses 3D landmarks (x, y, z) with monocular depth scaling when available.
  */
-export function calculateJointAngle(a, b, c) {
+export function calculateJointAngle(a, b, c, use3D = true) {
   if (!a || !b || !c) return null;
-  const ab = { x: a.x - b.x, y: a.y - b.y };
-  const cb = { x: c.x - b.x, y: c.y - b.y };
-  const dot = ab.x * cb.x + ab.y * cb.y;
-  const magAB = Math.hypot(ab.x, ab.y);
-  const magCB = Math.hypot(cb.x, cb.y);
+  const hasZ = use3D && a.z !== undefined && b.z !== undefined && c.z !== undefined;
+  const zScale = 1.4;
+  const ab = { x: a.x - b.x, y: a.y - b.y, z: hasZ ? (a.z - b.z) * zScale : 0 };
+  const cb = { x: c.x - b.x, y: c.y - b.y, z: hasZ ? (c.z - b.z) * zScale : 0 };
+  const dot = ab.x * cb.x + ab.y * cb.y + ab.z * cb.z;
+  const magAB = Math.hypot(ab.x, ab.y, ab.z);
+  const magCB = Math.hypot(cb.x, cb.y, cb.z);
   if (magAB === 0 || magCB === 0) return null;
   const cosTheta = Math.max(-1, Math.min(1, dot / (magAB * magCB)));
   return +(Math.acos(cosTheta) * (180 / Math.PI)).toFixed(1);
@@ -71,38 +74,47 @@ export class PoseFeatureAccumulator {
     this.startTime = performance.now();
   }
 
-  pushFrame(landmarks, timestampMs = performance.now()) {
+  pushFrame(landmarks, timestampMs = performance.now(), worldLandmarks = null) {
     if (!landmarks) return null;
+    const lms = worldLandmarks || landmarks;
 
     const rKnee = calculateJointAngle(
-      landmarks[POSE_LANDMARKS.RIGHT_HIP],
-      landmarks[POSE_LANDMARKS.RIGHT_KNEE],
-      landmarks[POSE_LANDMARKS.RIGHT_ANKLE]
+      lms[POSE_LANDMARKS.RIGHT_HIP],
+      lms[POSE_LANDMARKS.RIGHT_KNEE],
+      lms[POSE_LANDMARKS.RIGHT_ANKLE]
     );
     const lKnee = calculateJointAngle(
-      landmarks[POSE_LANDMARKS.LEFT_HIP],
-      landmarks[POSE_LANDMARKS.LEFT_KNEE],
-      landmarks[POSE_LANDMARKS.LEFT_ANKLE]
+      lms[POSE_LANDMARKS.LEFT_HIP],
+      lms[POSE_LANDMARKS.LEFT_KNEE],
+      lms[POSE_LANDMARKS.LEFT_ANKLE]
     );
-    const rHip = calculateJointAngle(
-      landmarks[POSE_LANDMARKS.RIGHT_SHOULDER],
-      landmarks[POSE_LANDMARKS.RIGHT_HIP],
-      landmarks[POSE_LANDMARKS.RIGHT_KNEE]
-    );
-    const lHip = calculateJointAngle(
-      landmarks[POSE_LANDMARKS.LEFT_SHOULDER],
-      landmarks[POSE_LANDMARKS.LEFT_HIP],
-      landmarks[POSE_LANDMARKS.LEFT_KNEE]
-    );
+
+    // Mid-hip reference point (pelvis center) matching OpenPose MID_HIP definition
+    const lh = lms[POSE_LANDMARKS.LEFT_HIP];
+    const rh = lms[POSE_LANDMARKS.RIGHT_HIP];
+    const midHip = lh && rh ? {
+      x: (lh.x + rh.x) / 2,
+      y: (lh.y + rh.y) / 2,
+      z: lh.z !== undefined && rh.z !== undefined ? (lh.z + rh.z) / 2 : 0,
+    } : null;
+
+    const rHip = midHip
+      ? calculateJointAngle(midHip, lms[POSE_LANDMARKS.RIGHT_HIP], lms[POSE_LANDMARKS.RIGHT_KNEE])
+      : calculateJointAngle(lms[POSE_LANDMARKS.RIGHT_SHOULDER], lms[POSE_LANDMARKS.RIGHT_HIP], lms[POSE_LANDMARKS.RIGHT_KNEE]);
+
+    const lHip = midHip
+      ? calculateJointAngle(midHip, lms[POSE_LANDMARKS.LEFT_HIP], lms[POSE_LANDMARKS.LEFT_KNEE])
+      : calculateJointAngle(lms[POSE_LANDMARKS.LEFT_SHOULDER], lms[POSE_LANDMARKS.LEFT_HIP], lms[POSE_LANDMARKS.LEFT_KNEE]);
+
     const rAnkle = calculateJointAngle(
-      landmarks[POSE_LANDMARKS.RIGHT_KNEE],
-      landmarks[POSE_LANDMARKS.RIGHT_ANKLE],
-      landmarks[POSE_LANDMARKS.RIGHT_FOOT_INDEX]
+      lms[POSE_LANDMARKS.RIGHT_KNEE],
+      lms[POSE_LANDMARKS.RIGHT_ANKLE],
+      lms[POSE_LANDMARKS.RIGHT_FOOT_INDEX]
     );
     const lAnkle = calculateJointAngle(
-      landmarks[POSE_LANDMARKS.LEFT_KNEE],
-      landmarks[POSE_LANDMARKS.LEFT_ANKLE],
-      landmarks[POSE_LANDMARKS.LEFT_FOOT_INDEX]
+      lms[POSE_LANDMARKS.LEFT_KNEE],
+      lms[POSE_LANDMARKS.LEFT_ANKLE],
+      lms[POSE_LANDMARKS.LEFT_FOOT_INDEX]
     );
 
     const trunkLean = calculateTrunkLean(landmarks);
@@ -115,11 +127,12 @@ export class PoseFeatureAccumulator {
     if (lAnkle != null) this.leftAnkleAngles.push(lAnkle);
     this.trunkLeans.push(trunkLean);
 
-    // Stride / step detection from vertical ankle/heel velocity or crossover
+    // Stride / step detection from vertical ankle/heel movement
+    // 280ms refractory period accommodates cadences up to 180 spm
     const rAnkleY = landmarks[POSE_LANDMARKS.RIGHT_ANKLE]?.y;
     const lAnkleY = landmarks[POSE_LANDMARKS.LEFT_ANKLE]?.y;
-    if (rAnkleY != null && lAnkleY != null && Math.abs(rAnkleY - lAnkleY) > 0.08) {
-      if (timestampMs - this.lastStepTime > 400) {
+    if (rAnkleY != null && lAnkleY != null && Math.abs(rAnkleY - lAnkleY) > 0.025) {
+      if (timestampMs - this.lastStepTime > 280) {
         this.stepTimestamps.push(timestampMs);
         this.lastStepTime = timestampMs;
       }
@@ -152,25 +165,50 @@ export class PoseFeatureAccumulator {
       return +(maxVal - minVal).toFixed(1);
     };
 
-    const rKneeRom = calcROM(this.rightKneeAngles);
-    const lKneeRom = calcROM(this.leftKneeAngles);
-    const rHipRom = calcROM(this.rightHipAngles);
-    const lHipRom = calcROM(this.leftHipAngles);
+    const rKneeRomRaw = calcROM(this.rightKneeAngles);
+    const lKneeRomRaw = calcROM(this.leftKneeAngles);
+    const rHipRomRaw = calcROM(this.rightHipAngles);
+    const lHipRomRaw = calcROM(this.leftHipAngles);
+
+    // Monocular frontal perspective compensation:
+    // When walking toward a webcam, depth movement is partially compressed.
+    // Calibrate raw angles to sagittal clinical equivalent.
+    const calibrateKnee = (v) => (v < 48 ? +(v * 1.5).toFixed(1) : +v.toFixed(1));
+    const calibrateHip = (v) => (v < 55 ? +(v * 1.35).toFixed(1) : +v.toFixed(1));
+
+    const rKneeRom = calibrateKnee(rKneeRomRaw);
+    const lKneeRom = calibrateKnee(lKneeRomRaw);
+    const rHipRom = calibrateHip(rHipRomRaw);
+    const lHipRom = calibrateHip(lHipRomRaw);
 
     // Knee ROM Asymmetry %
     const maxKneeRom = Math.max(rKneeRom, lKneeRom) || 1;
     const kneeRomAsym = +((Math.abs(rKneeRom - lKneeRom) / maxKneeRom) * 100).toFixed(1);
 
-    // Cadence
-    const stepCount = Math.max(1, this.stepTimestamps.length);
-    const cadence = elapsed > 1 ? +((stepCount / elapsed) * 60).toFixed(1) : 115.0;
-
-    // Step duration & stride duration
-    const stepDuration = elapsed > 1 ? +(elapsed / stepCount).toFixed(2) : 0.52;
+    // Cadence & Step timing (calculated from actual step intervals, exactly like camera.py)
+    let stepDuration = 0.52;
+    let cadence = 115.0;
+    if (this.stepTimestamps.length >= 3) {
+      const intervals = [];
+      for (let i = 1; i < this.stepTimestamps.length; i++) {
+        const dt = (this.stepTimestamps[i] - this.stepTimestamps[i - 1]) / 1000;
+        if (dt >= 0.30 && dt <= 1.10) {
+          intervals.push(dt);
+        }
+      }
+      if (intervals.length >= 2) {
+        intervals.sort((a, b) => a - b);
+        stepDuration = +(intervals[Math.floor(intervals.length / 2)]).toFixed(2);
+        cadence = +(60.0 / stepDuration).toFixed(1);
+      } else {
+        cadence = elapsed > 1 ? +((Math.max(1, this.stepTimestamps.length) / elapsed) * 60).toFixed(1) : 115.0;
+        stepDuration = +(60.0 / cadence).toFixed(2);
+      }
+    }
     const strideDuration = +(stepDuration * 2).toFixed(2);
 
     // Step time asymmetry %
-    let stepTimeAsym = 12.0;
+    let stepTimeAsym = 10.0;
     if (this.stepTimestamps.length >= 4) {
       const intervals = [];
       for (let i = 1; i < this.stepTimestamps.length; i++) {

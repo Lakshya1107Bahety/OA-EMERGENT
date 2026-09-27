@@ -161,6 +161,15 @@ def screen_patient_multimodal(
                 ref.get("feature_distributions", {}).get(col, {}).get("mean", 45.0)
             )
 
+    # Apply winsorizing clip bounds from reference cohort
+    clip_bounds = ref.get("clip_bounds", {})
+    if clip_bounds:
+        for f in FEATURES:
+            if f in clip_bounds:
+                p1 = clip_bounds[f].get("p1", -999.0)
+                p99 = clip_bounds[f].get("p99", 999.0)
+                df_cam[f] = df_cam[f].clip(lower=p1, upper=p99)
+
     X = df_cam[FEATURES]
     if model is not None:
         try:
@@ -183,17 +192,29 @@ def screen_patient_multimodal(
     mean_score = float(np.mean(scores))
     abnormal_rate = float(np.mean(preds == -1))
 
-    # Reference participants scores for percentile calculation
+    # Reference scores for percentile calculation (prefer trial-level for 1-2 trials)
+    ref_trial_scores = ref.get("trial_scores", [])
     ref_participants = ref.get("reference_participants", [])
-    if ref_participants:
+    if ref_trial_scores and len(df_cam) <= 3:
+        score_risk = 100.0 * (1.0 - percentile_rank(np.array(ref_trial_scores, dtype=float), mean_score))
+    elif ref_participants:
         ref_scores = np.array([p["mean_biomechanical_score"] for p in ref_participants], dtype=float)
-        ref_abnormal = np.array([p["abnormal_trial_rate"] for p in ref_participants], dtype=float)
+        score_risk = 100.0 * (1.0 - percentile_rank(ref_scores, mean_score))
     else:
         ref_scores = np.array([0.02, 0.03, 0.04, 0.05, 0.06, 0.08])
-        ref_abnormal = np.array([0.1, 0.2, 0.3, 0.4, 0.5])
+        score_risk = 100.0 * (1.0 - percentile_rank(ref_scores, mean_score))
 
-    score_risk = 100.0 * (1.0 - percentile_rank(ref_scores, mean_score))
-    abnormal_risk = 100.0 * percentile_rank(ref_abnormal, abnormal_rate)
+    if len(df_cam) <= 3:
+        # Continuous abnormal risk for single walk sessions to avoid 0/1 cliff edge
+        if mean_score >= 0.04:
+            abnormal_risk = 0.0
+        elif mean_score >= 0.0:
+            abnormal_risk = float((0.04 - mean_score) / 0.04 * 25.0)
+        else:
+            abnormal_risk = min(100.0, float(25.0 + (-mean_score) / 0.08 * 75.0))
+    else:
+        ref_abnormal = np.array([p["abnormal_trial_rate"] for p in ref_participants], dtype=float) if ref_participants else np.array([0.1, 0.2, 0.3])
+        abnormal_risk = 100.0 * percentile_rank(ref_abnormal, abnormal_rate)
 
     biomech_screening_score = 0.70 * score_risk + 0.30 * abnormal_risk
 
@@ -226,14 +247,14 @@ def screen_patient_multimodal(
 
     final_score = float(max(5.0, min(98.0, round(final_score, 1))))
 
-    # Threshold classification
-    p90 = float(ref.get("thresholds", {}).get("p90", 88.08))
-    p97_5 = float(ref.get("thresholds", {}).get("p97_5", 96.37))
+    # Threshold classification (smooth clinical risk bands)
+    p90 = float(ref.get("thresholds", {}).get("p90", 45.0))
+    p97_5 = float(ref.get("thresholds", {}).get("p97_5", 75.0))
 
-    if final_score <= p90:
+    if final_score <= 45.0:
         risk_category = "LOW PROTOTYPE RISK"
         badge_variant = "low"
-    elif final_score <= p97_5:
+    elif final_score <= 75.0:
         risk_category = "MODERATE PROTOTYPE RISK"
         badge_variant = "moderate"
     else:
@@ -338,6 +359,8 @@ def screen_patient_multimodal(
         "screening_score": final_score,
         "risk_category": risk_category,
         "badge_variant": badge_variant,
+        "biomechanical_risk_score": round(float(biomech_screening_score), 1),
+        "clinical_risk_score": round(float(clinical_risk), 1),
         "mean_biomechanical_score": round(mean_score, 5),
         "abnormal_trial_rate_pct": round(abnormal_rate * 100.0, 1),
         "trials_analyzed": len(df_cam),

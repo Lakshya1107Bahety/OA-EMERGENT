@@ -10,7 +10,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import {
   Cloud, CloudOff, Upload, RadioTower, Loader2, Zap, CheckCircle2, AlertTriangle,
-  Activity, Scale, Gauge, FileText, Stethoscope, Server,
+  Activity, Scale, Gauge, FileText, Stethoscope, Server, Camera,
 } from "lucide-react";
 
 const ResultTile = ({ icon: Icon, label, value, suffix, testid }) => (
@@ -40,6 +40,23 @@ export default function OASentinel() {
   useEffect(() => {
     api.get("/patients").then((r) => setPatients(r.data)).catch(() => {});
     refreshHealth();
+
+    // Auto-load completed camera trials (including 3003-dataset matched trial)
+    const cachedTrials = localStorage.getItem("oa_last_camera_trials");
+    if (cachedTrials) {
+      try {
+        const trials = JSON.parse(cachedTrials);
+        if (trials && trials.length > 0) {
+          setCameraResults(trials);
+          setTab("camera");
+          const last = trials[trials.length - 1];
+          const desc = last._source?.includes("dataset")
+            ? `3003 Dataset Matched (Participant #${last._matched_participant} · ${last._matched_trial})`
+            : `Live Camera Recording (${trials.length} trial(s))`;
+          setSourceLabel(`Camera Analysis: ${desc}`);
+        }
+      } catch (err) {}
+    }
   }, []);
 
   const refreshHealth = async () => {
@@ -77,6 +94,30 @@ export default function OASentinel() {
     setCameraResults(averaged);
     setSourceLabel(`Last sensor session — ${raw.length} readings → ${averaged.length} averaged (every 20)`);
     toast.success(`Loaded ${raw.length} readings → ${averaged.length} averaged samples`);
+  };
+
+  const useLastCameraTrials = () => {
+    const cachedTrials = localStorage.getItem("oa_last_camera_trials");
+    if (!cachedTrials) {
+      toast.error("No camera trials found. Run a trial in Live Camera Analysis first.");
+      return;
+    }
+    try {
+      const trials = JSON.parse(cachedTrials);
+      if (!trials || !trials.length) {
+        toast.error("No valid camera trials stored.");
+        return;
+      }
+      setCameraResults(trials);
+      const last = trials[trials.length - 1];
+      const desc = last._source?.includes("dataset")
+        ? `3003 Dataset Matched (Participant #${last._matched_participant} · ${last._matched_trial})`
+        : `Live Camera Recording (${trials.length} trial(s))`;
+      setSourceLabel(`Camera Analysis: ${desc}`);
+      toast.success(`Loaded ${trials.length} camera trial(s)`);
+    } catch {
+      toast.error("Could not read stored camera trials.");
+    }
   };
 
   const buildPatient = () => {
@@ -174,9 +215,19 @@ export default function OASentinel() {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="rounded-xl">
+          <TabsTrigger value="camera" data-testid="analyze-tab-camera"><Camera className="w-4 h-4 mr-1.5" /> Camera Analysis</TabsTrigger>
           <TabsTrigger value="csv" data-testid="analyze-tab-csv"><Upload className="w-4 h-4 mr-1.5" /> CSV Upload</TabsTrigger>
           <TabsTrigger value="session" data-testid="analyze-tab-session"><RadioTower className="w-4 h-4 mr-1.5" /> Sensor Session</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="camera" className="mt-4">
+          <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-slate-600 max-w-lg">Use the functional movement recording or 3003 clinical dataset-matched trial from Live Camera Analysis.</p>
+            <Button className="rounded-xl h-11 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={useLastCameraTrials} data-testid="analyze-camera-button">
+              <Camera className="w-4 h-4 mr-2" /> Load Camera Analysis
+            </Button>
+          </div>
+        </TabsContent>
 
         <TabsContent value="csv" className="mt-4">
           <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5 flex flex-wrap items-center justify-between gap-3">

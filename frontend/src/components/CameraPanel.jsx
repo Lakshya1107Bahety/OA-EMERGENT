@@ -13,6 +13,8 @@ export default function CameraPanel({ onTrialComplete, onFrameSnapshot, activeTe
   const rafRef = useRef(null);
   const accumulatorRef = useRef(null);
   const timerIntervalRef = useRef(null);
+  // Ref mirror of isRecording so the RAF detection loop always reads the latest value
+  const isRecordingRef = useRef(false);
 
   const [cameraActive, setCameraActive] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false);
@@ -124,11 +126,12 @@ export default function CameraPanel({ onTrialComplete, onFrameSnapshot, activeTe
 
           if (results.landmarks && results.landmarks.length > 0) {
             const lms = results.landmarks[0];
+            const worldLms = results.worldLandmarks && results.worldLandmarks.length > 0 ? results.worldLandmarks[0] : null;
             setLandmarks(lms);
 
-            // If recording, feed into accumulator
-            if (accumulatorRef.current && isRecording) {
-              const snap = accumulatorRef.current.pushFrame(lms, nowMs);
+            // If recording, feed into accumulator (use ref — not state — to avoid stale closure)
+            if (accumulatorRef.current && isRecordingRef.current) {
+              const snap = accumulatorRef.current.pushFrame(lms, nowMs, worldLms);
               if (snap) {
                 setLiveMetrics({
                   rightKnee: snap.right_knee_angle,
@@ -163,6 +166,7 @@ export default function CameraPanel({ onTrialComplete, onFrameSnapshot, activeTe
     }
 
     accumulatorRef.current = new PoseFeatureAccumulator(selectedTest.id);
+    isRecordingRef.current = true;
     setIsRecording(true);
     setRecordingSeconds(0);
 
@@ -178,6 +182,7 @@ export default function CameraPanel({ onTrialComplete, onFrameSnapshot, activeTe
   const stopRecording = () => {
     if (!isRecording) return;
     clearInterval(timerIntervalRef.current);
+    isRecordingRef.current = false;
     setIsRecording(false);
 
     if (accumulatorRef.current) {

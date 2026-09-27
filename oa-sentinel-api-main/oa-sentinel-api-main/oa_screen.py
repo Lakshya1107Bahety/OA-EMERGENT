@@ -311,15 +311,26 @@ def screen_trials(
         df["participant_id"] = "patient"
 
     # Compute biomechanical predictions & scores if not already present
-    if "biomechanical_prediction" not in df.columns or "biomechanical_score" not in df.columns:
+    # Also re-run if scores are all-zero (sent as placeholders by the frontend client)
+    needs_model = (
+        "biomechanical_prediction" not in df.columns
+        or "biomechanical_score" not in df.columns
+        or (df.get("biomechanical_score", pd.Series([0])) == 0).all()
+    )
+    if needs_model:
         model_path = Path(__file__).parent / "camera_biomechanics_model.pkl"
         if model_path.exists():
             try:
                 import joblib
                 model = joblib.load(model_path)
+                clip_bounds = reference.get("clip_bounds", {}) if isinstance(reference, dict) else {}
                 for f in FEATURES:
                     if f not in df.columns:
                         df[f] = 0.0
+                    elif f in clip_bounds:
+                        p1 = clip_bounds[f].get("p1", -999.0)
+                        p99 = clip_bounds[f].get("p99", 999.0)
+                        df[f] = df[f].clip(lower=p1, upper=p99)
                 X = df[FEATURES]
                 df["biomechanical_prediction"] = model.predict(X)
                 df["biomechanical_score"] = model.decision_function(X)
@@ -366,20 +377,40 @@ def screen_trials(
         )
     )
 
-    score_risk = 100.0 * (
-        1.0 -
-        percentile_rank(
-            ref_score_values,
-            mean_score
+    # Use trial-level distribution for 1-3 trials to avoid multi-trial average compression
+    ref_trial_scores = reference.get("trial_scores") if isinstance(reference, dict) else None
+    if ref_trial_scores and len(df) <= 3:
+        score_risk = 100.0 * (
+            1.0 -
+            percentile_rank(
+                np.array(ref_trial_scores, dtype=float),
+                mean_score
+            )
         )
-    )
+    else:
+        score_risk = 100.0 * (
+            1.0 -
+            percentile_rank(
+                ref_score_values,
+                mean_score
+            )
+        )
 
-    abnormal_risk = 100.0 * (
-        percentile_rank(
-            ref_abnormal_values,
-            abnormal_rate
+    if len(df) <= 3:
+        # Smooth continuous abnormal risk for single walk sessions to avoid 0/1 cliff edge
+        if mean_score >= 0.04:
+            abnormal_risk = 0.0
+        elif mean_score >= 0.0:
+            abnormal_risk = float((0.04 - mean_score) / 0.04 * 25.0)
+        else:
+            abnormal_risk = min(100.0, float(25.0 + (-mean_score) / 0.08 * 75.0))
+    else:
+        abnormal_risk = 100.0 * (
+            percentile_rank(
+                ref_abnormal_values,
+                abnormal_rate
+            )
         )
-    )
 
     # Final screening index.
     screening_score = (
@@ -388,18 +419,14 @@ def screen_trials(
         0.30 * abnormal_risk
     )
 
-    p90 = float(
-        reference["thresholds"]["p90"]
-    )
+    # Threshold classification
+    p90 = float(reference["thresholds"].get("p90", 45.0)) if isinstance(reference, dict) and "thresholds" in reference else 45.0
+    p975 = float(reference["thresholds"].get("p97_5", 75.0)) if isinstance(reference, dict) and "thresholds" in reference else 75.0
 
-    p975 = float(
-        reference["thresholds"]["p97_5"]
-    )
-
-    if screening_score <= p90:
+    if screening_score <= 45.0:
         level = "LOW PROTOTYPE RISK"
 
-    elif screening_score <= p975:
+    elif screening_score <= 75.0:
         level = "MODERATE PROTOTYPE RISK"
 
     else:
