@@ -20,7 +20,7 @@
   ],
   "updated_files": [],
   "success_rate": {"backend": "n/a (skipped)", "frontend": "100%"},
-  "test_credentials": "Admin lakshyabahety15@gmail.com / JointCare@2026 (used for all tests)",
+  "test_credentials": "Admin lakshyabahety15@gmail.com / <redacted> (used for all tests)",
   "seed_data_creation": "Uploaded /tmp/csvtest/test.csv (10 numeric rows, headers acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,oa_label). One screening created for TEST_Patient_8c8aac. No cleanup performed (backend testing skipped).",
   "retest_needed": false,
   "main_agent_can_self_test": true,

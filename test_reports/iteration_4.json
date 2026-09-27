@@ -14,7 +14,7 @@
   ],
   "updated_files": [],
   "success_rate": {"backend": "n/a (skipped)", "frontend": "100% (7/7 scenarios)"},
-  "test_credentials": "lakshyabahety15@gmail.com / JointCare@2026",
+  "test_credentials": "lakshyabahety15@gmail.com / <redacted>",
   "seed_data_creation": "/tmp/test_biomech.csv — 45 numeric rows with biomechanical headers",
   "retest_needed": false,
   "main_agent_can_self_test": true,

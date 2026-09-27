@@ -420,9 +420,13 @@ async def ai_summary(screening_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Screening not found")
     if s.get("ai_summary"):
         return {"ai_summary": s["ai_summary"]}
-    p = await db.patients.find_one({"_id": ObjectId(s["patient_id"])})
-    r = s["result"]
+    p = await db.patients.find_one({"_id": ObjectId(s["patient_id"])}) or {}
+    r = s.get("result") or {}
+    name = p.get("name", "The patient")
+    level = (r.get("risk_level") or "unknown").lower()
     try:
+        if not EMERGENT_LLM_KEY:
+            raise RuntimeError("No LLM key configured")
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
@@ -435,23 +439,23 @@ async def ai_summary(screening_id: str, user: dict = Depends(get_current_user)):
             ),
         ).with_model("openai", "gpt-5.4")
         prompt = (
-            f"Patient: {p['name']}, age {p['age']}, gender {p.get('gender')}, "
+            f"Patient: {name}, age {p.get('age')}, gender {p.get('gender')}, "
             f"BMI {p.get('bmi')}, occupation {p.get('occupation')}, village {p.get('village')}.\n"
-            f"Screening result: OA probability {r['oa_probability']}%, risk level {r['risk_level']}, "
-            f"confidence {r['confidence']}%. Knee stability {r['knee_stability_score']}/100, "
-            f"movement symmetry {r['movement_symmetry']}%, balance {r['balance_score']}/100.\n"
-            f"Top contributing factors: {', '.join(f['factor'] for f in r['contributing_factors'][:3])}.\n"
+            f"Screening result: OA risk score {r.get('oa_probability')}/100, risk level {r.get('risk_level')}, "
+            f"confidence {r.get('confidence')}%. Knee stability {r.get('knee_stability_score')}/100, "
+            f"movement symmetry {r.get('movement_symmetry')}%, balance {r.get('balance_score')}/100.\n"
+            f"Top contributing factors: {', '.join(f['factor'] for f in (r.get('contributing_factors') or [])[:3])}.\n"
             f"Provide a screening summary and next-step advice for the healthcare worker."
         )
         text = await chat.send_message(UserMessage(text=prompt))
         summary = text if isinstance(text, str) else str(text)
-    except Exception as e:
-        logger.exception("AI summary failed")
-        summary = (
-            f"{p['name']} shows a {r['risk_level'].lower()} osteoarthritis risk "
-            f"({r['oa_probability']}% probability). {r['recommendation']} {r['follow_up']} "
-            f"This is AI-assisted screening, not a medical diagnosis."
-        )
+    except Exception:
+        logger.exception("AI summary failed; using template summary")
+        summary = " ".join(x for x in [
+            f"{name} shows a {level} osteoarthritis risk (risk score {r.get('oa_probability')}/100).",
+            r.get("recommendation"), r.get("follow_up"),
+            "This is AI-assisted screening, not a medical diagnosis.",
+        ] if x)
     await db.screenings.update_one({"_id": ObjectId(screening_id)}, {"$set": {"ai_summary": summary}})
     return {"ai_summary": summary}
 
@@ -466,8 +470,10 @@ async def analytics_summary(user: dict = Depends(get_current_user)):
     screenings = await db.screenings.find({}).to_list(5000)
     patients = await db.patients.find({}).to_list(5000)
 
-    probs = [s["result"]["oa_probability"] for s in screenings if s.get("result")]
-    stabs = [s["result"]["knee_stability_score"] for s in screenings if s.get("result")]
+    probs = [s["result"].get("oa_probability") for s in screenings if s.get("result")]
+    stabs = [s["result"].get("knee_stability_score") for s in screenings if s.get("result")]
+    probs = [v for v in probs if isinstance(v, (int, float))]
+    stabs = [v for v in stabs if isinstance(v, (int, float))]
     avg_prob = round(sum(probs) / len(probs), 1) if probs else 0
     avg_stab = round(sum(stabs) / len(stabs), 1) if stabs else 0
 
@@ -586,6 +592,36 @@ def _safe_json(resp):
         return {"raw": resp.text}
 
 
+def _to_screening_result(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert an OA Sentinel API response into the result schema the rest of
+    the app (result page, analytics, PDF report, AI summary) expects.
+    Values the camera gait model does not measure are left as None.
+    """
+    level = str(data.get("risk_level") or data.get("screening_level") or "").title() or None
+    rec = prediction_engine._recommendation(level) if level in {"Low", "Moderate", "High", "Severe"} else {}
+    findings = [f.strip() for f in str(data.get("main_findings") or "").split(";")
+                if f.strip() and not f.strip().startswith("No major")]
+    return {
+        # 0-100 screening risk index vs. the healthy reference (higher = more unusual gait).
+        # Not a calibrated OA probability; the key name is kept for UI compatibility.
+        "oa_probability": data.get("oa_probability"),
+        "risk_level": level,
+        "confidence": None,
+        "knee_stability_score": None,
+        "movement_symmetry": data.get("symmetry"),
+        "balance_score": None,
+        "contributing_factors": [{"factor": f, "weight": None} for f in findings],
+        "recommendation": rec.get("recommendation"),
+        "follow_up": rec.get("follow_up"),
+        "disclaimer": data.get("note") or "AI-assisted screening, not a medical diagnosis.",
+        "engine_version": "oa-sentinel-api camera isolation-forest",
+        "trials_analyzed": data.get("trials_analyzed"),
+        "abnormal_trial_rate_pct": data.get("abnormal_trial_rate_pct"),
+        "raw": data,
+    }
+
+
 @api.get("/oa/health")
 async def oa_health():
     if not OA_API_URL:
@@ -619,21 +655,28 @@ async def oa_analyze(body: OAAnalyzeInput, user: dict = Depends(get_current_user
         return {"success": False, "status_code": r.status_code,
                 "error": f"OA Sentinel API returned an error ({r.status_code}): {msg}"}
 
+    screening_id = None
     if body.patient_id:
         try:
-            await db.screenings.insert_one({
+            res = await db.screenings.insert_one({
                 "patient_id": body.patient_id,
                 "source": "oa_sentinel_api",
                 "camera_results": body.camera_results,
-                "result": data,
+                "result": _to_screening_result(data),
                 "reading_count": len(body.camera_results),
+                "movement_summary": None,
                 "created_by": user["id"],
                 "created_at": now_iso(),
                 "review_status": "pending",
+                "doctor_notes": None,
+                "confirmed_risk_level": None,
+                "follow_up_date": None,
+                "ai_summary": None,
             })
+            screening_id = str(res.inserted_id)
         except Exception:
             logger.exception("Failed to persist OA analyze result")
-    return {"success": True, "result": data}
+    return {"success": True, "result": data, "screening_id": screening_id}
 
 
 # ---------------------------------------------------------------- startup
@@ -641,7 +684,10 @@ async def oa_analyze(body: OAAnalyzeInput, user: dict = Depends(get_current_user
 async def startup():
     await db.users.create_index("email", unique=True)
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@example.com").lower()
-    admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
+    admin_pw = os.environ.get("ADMIN_PASSWORD")
+    if not admin_pw:
+        logger.warning("ADMIN_PASSWORD not set; admin account not seeded")
+        return
     existing = await db.users.find_one({"email": admin_email})
     if not existing:
         await db.users.insert_one({

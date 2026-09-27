@@ -21,8 +21,8 @@ if not BASE_URL:
                 BASE_URL = line.split("=", 1)[1].strip().rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "lakshyabahety15@gmail.com"
-ADMIN_PASSWORD = "JointCare@2026"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com")
+ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]  # same value the server was started with
 
 UNIQ = uuid.uuid4().hex[:6]
 WORKER_EMAIL = f"worker_{UNIQ}@jointcare.ai"

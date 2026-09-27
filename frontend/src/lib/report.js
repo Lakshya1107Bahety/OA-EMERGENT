@@ -46,10 +46,12 @@ export async function generateReport(patient, screening) {
   doc.roundedRect(40, y - 14, W - 80, 90, 8, 8, "F");
   doc.setFontSize(28);
   doc.setTextColor(...green);
-  doc.text(`${r.oa_probability}%`, 60, y + 24);
+  const fmt = (v, suffix = "") => (v === null || v === undefined ? "n/a" : `${v}${suffix}`);
+  const isCamera = screening.source === "oa_sentinel_api";
+  doc.text(fmt(r.oa_probability, "%"), 60, y + 24);
   doc.setFontSize(11);
   doc.setTextColor(100, 116, 139);
-  doc.text("OA Probability", 60, y + 44);
+  doc.text(isCamera ? "Gait Risk Score" : "OA Probability", 60, y + 44);
 
   doc.setTextColor(30, 41, 59);
   doc.setFont("helvetica", "bold");
@@ -57,9 +59,9 @@ export async function generateReport(patient, screening) {
   doc.text(`Risk Level: ${r.risk_level}`, 220, y + 10);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(`Confidence: ${r.confidence}%`, 220, y + 30);
-  doc.text(`Knee Stability: ${r.knee_stability_score}/100`, 220, y + 48);
-  doc.text(`Movement Symmetry: ${r.movement_symmetry}%   Balance: ${r.balance_score}/100`, 220, y + 66);
+  doc.text(`Confidence: ${fmt(r.confidence, "%")}`, 220, y + 30);
+  doc.text(`Knee Stability: ${fmt(r.knee_stability_score, "/100")}`, 220, y + 48);
+  doc.text(`Movement Symmetry: ${fmt(r.movement_symmetry, "%")}   Balance: ${fmt(r.balance_score, "/100")}`, 220, y + 66);
 
   y += 110;
   doc.setFont("helvetica", "bold");
