@@ -56,21 +56,24 @@ export function pick(obj, candidates) {
   return undefined;
 }
 
-// Exact camera biomechanics schema expected by the OA Sentinel backend.
+// Camera gait features the OA Sentinel model scores. The API computes
+// biomechanical_prediction / biomechanical_score itself.
 export const BIOMECH_NUMERIC_FIELDS = [
-  "biomechanical_prediction", "biomechanical_score",
   "right_knee_rom_deg", "left_knee_rom_deg", "right_hip_rom_deg", "left_hip_rom_deg",
   "step_duration_sec", "stride_duration_sec", "cadence_steps_min",
   "knee_rom_asymmetry_pct", "step_time_asymmetry_pct", "trunk_lean_deg",
 ];
 
+// Missing values are sent as null (never 0): a fake 0° knee ROM or 0 cadence
+// would be scored as a real, extremely abnormal measurement.
 function num(v) {
+  if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? n : null;
 }
 
 // Coerce each averaged trial to EXACTLY the fields the backend expects
-// (participant_id + the 12 numeric biomechanics fields). Any other columns —
+// (participant_id + the 10 gait features). Any other columns —
 // e.g. knee_angle, balance_score, symmetry_score, raw acc/gyro — are dropped.
 export function normalizeCameraResults(rows, participantId) {
   if (!Array.isArray(rows)) return [];

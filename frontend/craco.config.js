@@ -110,6 +110,14 @@ let webpackConfig = {
     },
     configure: (webpackConfig) => {
 
+      // MediaPipe's bundle loads its WASM via a dynamic require, which webpack
+      // reports as a warning. It is harmless, but CI builds (Vercel) fail on warnings.
+      webpackConfig.ignoreWarnings = [
+        ...(webpackConfig.ignoreWarnings || []),
+        { message: /Critical dependency: the request of a dependency is an expression/ },
+        { message: /Failed to parse source map/ },
+      ];
+
       // Add ignored patterns to reduce watched directories
         webpackConfig.watchOptions = {
           ...webpackConfig.watchOptions,

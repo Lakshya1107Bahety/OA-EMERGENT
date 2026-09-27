@@ -16,6 +16,8 @@ export default function PoseCamera({ onLandmarks, active = true }) {
 
   useEffect(() => {
     let cancelled = false;
+    // The <video> node is mounted for the component's lifetime; capture it for cleanup.
+    const videoEl = videoRef.current;
 
     async function init() {
       try {
@@ -80,8 +82,7 @@ export default function PoseCamera({ onLandmarks, active = true }) {
     return () => {
       cancelled = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      const v = videoRef.current;
-      if (v?.srcObject) v.srcObject.getTracks().forEach((t) => t.stop());
+      if (videoEl?.srcObject) videoEl.srcObject.getTracks().forEach((t) => t.stop());
       landmarkerRef.current?.close?.();
     };
   }, []);

@@ -74,7 +74,11 @@ export default function PatientDetail() {
                   </div>
                   <div className="text-sm text-slate-600">
                     <p>{new Date(s.created_at).toLocaleString()}</p>
-                    <p>Stability {s.result?.knee_stability_score}/100 · {s.reading_count} readings</p>
+                    <p>
+                      {s.source === "oa_sentinel_api"
+                        ? `Camera gait · ${s.reading_count} trials`
+                        : `Stability ${s.result?.knee_stability_score ?? "—"}/100 · ${s.reading_count} readings`}
+                    </p>
                     <p className="text-xs mt-1">Review: <b className="capitalize">{s.review_status}</b></p>
                   </div>
                 </div>

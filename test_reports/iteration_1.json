@@ -23,7 +23,7 @@
   ],
   "updated_files": ["/app/backend/tests/test_jointcare_api.py"],
   "success_rate": {"backend": "100% (20/20)", "frontend": "100% of tested flows"},
-  "test_credentials": "Admin: lakshyabahety15@gmail.com / JointCare@2026. Test worker/doctor accounts are created dynamically per run via /api/auth/register.",
+  "test_credentials": "Admin: lakshyabahety15@gmail.com / <redacted>. Test worker/doctor accounts are created dynamically per run via /api/auth/register.",
   "seed_data_creation": "Each test run creates one TEST_UI_<uniq> patient + screening under a freshly-registered healthcare worker. Admin also uploads a small 2-3 row CSV dataset which is stored in db.datasets (delete_many({}) is called on every upload so this stays bounded).",
   "retest_needed": false,
   "main_agent_can_self_test": true,
