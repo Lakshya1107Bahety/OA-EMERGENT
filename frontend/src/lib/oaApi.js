@@ -1,19 +1,14 @@
-import axios from "axios";
 import { api } from "@/lib/api";
 
 export const OA_API_URL = process.env.REACT_APP_OA_API_URL || "http://127.0.0.1:5000";
 
+// Gait analysis runs in the backend, so its health is the only one that matters.
 export async function checkHealth() {
   try {
     const { data } = await api.get("/oa/health");
     return data;
   } catch (err) {
-    try {
-      const direct = await axios.get(`${OA_API_URL}/health`, { timeout: 3500 });
-      return { connected: true, status_code: direct.status, upstream: true, url: OA_API_URL };
-    } catch (e2) {
-      return { connected: false, detail: "Could not reach server" };
-    }
+    return { connected: false, detail: "Could not reach the backend" };
   }
 }
 

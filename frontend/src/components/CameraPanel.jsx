@@ -195,11 +195,14 @@ export default function CameraPanel({ onTrialComplete, onFrameSnapshot, activeTe
   };
 
   useEffect(() => {
+    // The <video> element is always rendered, so capture it now; by cleanup
+    // time videoRef.current may already be null and the camera would stay on.
+    const video = videoRef.current;
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       clearInterval(timerIntervalRef.current);
-      if (videoRef.current?.srcObject) {
-        const stream = videoRef.current.srcObject;
+      if (video?.srcObject) {
+        const stream = video.srcObject;
         stream.getTracks().forEach((track) => track.stop());
       }
       landmarkerRef.current?.close?.();

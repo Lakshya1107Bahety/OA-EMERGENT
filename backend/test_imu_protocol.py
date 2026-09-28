@@ -96,8 +96,8 @@ def test_imu_flow():
     print("Screening Prediction with 10s IMU Averages completed:")
     print(f" - Screening ID: {screening_res['id']}")
     print(f" - Risk Level: {screening_res['result']['risk_level']}")
-    print(f" - OA Probability: {screening_res['result']['oa_probability']}%")
-    print(f" - Knee Stability Score: {screening_res['result']['knee_stability_score']}")
+    print(f" - Score type: {screening_res['result'].get('score_type')}")
+    print(f" - IMU irregularity (uncalibrated): {screening_res['result'].get('imu_score')}")
     print(f" - IMU Averages in Result: {screening_res['result'].get('imu_averages')}")
     print("\nALL 10-SECOND IMU TEST PROTOCOL & DATABASE PERSISTENCE VERIFICATIONS PASSED!")
 
