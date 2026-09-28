@@ -1,23 +1,51 @@
 """
-OA Sentinel — Biomechanical & Multimodal Prediction Engine
-Calibrated against 51-participant clinical dataset and normative reference cohort.
+OA Sentinel — screening engine.
+
+What this engine measures, and what it does not
+-----------------------------------------------
+The only calibrated component is camera gait analysis. An Isolation Forest
+(camera_biomechanics_model.pkl) was trained on 3,003 walking trials from a
+49-participant reference cohort (camera_features.csv). A patient's own camera
+trials are scored with that model and ranked against the reference trial
+scores, giving a *gait deviation percentile*: the share of reference walking
+trials that look more typical than the patient's gait.
+
+The reference cohort contains no diagnosed OA patients, so the score measures
+how atypical the gait is. It is NOT a probability of osteoarthritis.
+
+IMU features and clinical risk factors are computed and reported, but they
+are not fused into the score:
+  * there is no IMU reference cohort to calibrate IMU features against;
+  * there is no outcome data to weight clinical factors against each other.
+Both are shown to the clinician as context instead of being turned into
+made-up numbers.
+
+Without camera trials no score is produced (risk_level "Not determined").
 """
 from __future__ import annotations
+
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 import json
 import math
+
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Any, Optional
 
 try:
     import joblib
-except ImportError:
+except ImportError:  # pragma: no cover - reported via model_status
     joblib = None
+
+ENGINE_VERSION = "2.0"
 
 BASE_DIR = Path(__file__).parent
 REF_PATH = BASE_DIR / "oa_healthy_reference.json"
-MODEL_PKL = BASE_DIR.parent / "oa-sentinel-api-main" / "oa-sentinel-api-main" / "camera_biomechanics_model.pkl"
+MODEL_PATHS = [
+    BASE_DIR / "camera_biomechanics_model.pkl",
+    BASE_DIR.parent / "oa-sentinel-api-main" / "oa-sentinel-api-main" / "camera_biomechanics_model.pkl",
+]
 
 FEATURES = [
     "right_knee_rom_deg",
@@ -32,514 +60,394 @@ FEATURES = [
     "trunk_lean_deg",
 ]
 
-_loaded_model = None
-_loaded_ref = None
+FEATURE_LABELS = {
+    "right_knee_rom_deg": "Right knee range of motion",
+    "left_knee_rom_deg": "Left knee range of motion",
+    "right_hip_rom_deg": "Right hip range of motion",
+    "left_hip_rom_deg": "Left hip range of motion",
+    "step_duration_sec": "Step duration",
+    "stride_duration_sec": "Stride duration",
+    "cadence_steps_min": "Cadence",
+    "knee_rom_asymmetry_pct": "Knee ROM asymmetry",
+    "step_time_asymmetry_pct": "Step time asymmetry",
+    "trunk_lean_deg": "Trunk lean",
+}
 
+# A trial must contain at least this many measured features to be scored;
+# the rest are filled by the model's median imputer.
+MIN_MEASURED_FEATURES = 6
+
+G = 9.80665
+DEFAULT_DT = 0.02  # 50 Hz, the firmware's sampling rate
+
+NOT_DETERMINED = "Not determined"
+
+_model = None
+_model_error: Optional[str] = None
+_reference = None
+
+
+# ---------------------------------------------------------------- loading
 def get_reference() -> Dict[str, Any]:
-    global _loaded_ref
-    if _loaded_ref is None:
-        if REF_PATH.exists():
-            with open(REF_PATH, "r", encoding="utf-8") as f:
-                _loaded_ref = json.load(f)
-        else:
-            alt_path = BASE_DIR.parent / "frontend" / "src" / "constants" / "oa_healthy_reference.json"
-            if alt_path.exists():
-                with open(alt_path, "r", encoding="utf-8") as f:
-                    _loaded_ref = json.load(f)
-            else:
-                _loaded_ref = {
-                    "thresholds": {"p90": 88.08, "p97_5": 96.37},
-                    "features": FEATURES,
-                    "reference_participants": []
-                }
-    return _loaded_ref
+    global _reference
+    if _reference is None:
+        with open(REF_PATH, "r", encoding="utf-8") as f:
+            _reference = json.load(f)
+    return _reference
+
 
 def get_model():
-    global _loaded_model
-    if _loaded_model is None and joblib is not None and MODEL_PKL.exists():
-        try:
-            _loaded_model = joblib.load(MODEL_PKL)
-        except Exception:
-            _loaded_model = None
-    return _loaded_model
+    """Load the trained gait model once. Returns None if it is unavailable."""
+    global _model, _model_error
+    if _model is not None or _model_error is not None:
+        return _model
+    if joblib is None:
+        _model_error = "joblib / scikit-learn is not installed"
+        return None
+    path = next((p for p in MODEL_PATHS if p.exists()), None)
+    if path is None:
+        _model_error = "camera_biomechanics_model.pkl not found"
+        return None
+    try:
+        _model = joblib.load(path)
+    except Exception as e:  # version mismatch, corrupt file ...
+        _model_error = f"could not load model: {e}"
+    return _model
 
-def percentile_rank(values: np.ndarray, value: float) -> float:
+
+def model_status() -> Dict[str, Any]:
+    model = get_model()
+    return {"loaded": model is not None, "error": _model_error}
+
+
+# ---------------------------------------------------------------- helpers
+def percentile_rank(values, value: float) -> float:
+    """Fraction of `values` that are <= `value`."""
     values = np.asarray(values, dtype=float)
     values = values[np.isfinite(values)]
     if len(values) == 0 or not np.isfinite(value):
         return 0.5
     return float(np.searchsorted(np.sort(values), value, side="right") / len(values))
 
-def extract_imu_features(readings: List[Dict[str, float]]) -> Dict[str, float]:
-    """Extract kinematic and movement smoothness features from raw MPU6050 packets."""
-    if not readings:
-        return {
-            "accel_variance": 0.0,
-            "accel_rms": 0.0,
-            "peak_accel": 0.0,
-            "gyro_variance": 0.0,
-            "gyro_rms": 0.0,
-            "angular_velocity": 0.0,
-            "movement_smoothness": 1.0,
-            "jerk": 0.0,
-            "step_periodicity": 0.0,
-            "sample_count": 0,
-        }
 
-    ax = np.array([float(r.get("acc_x", r.get("ax", 0.0))) for r in readings])
-    ay = np.array([float(r.get("acc_y", r.get("ay", 0.0))) for r in readings])
-    az = np.array([float(r.get("acc_z", r.get("az", 0.0))) for r in readings])
-    gx = np.array([float(r.get("gyro_x", r.get("gx", 0.0))) for r in readings])
-    gy = np.array([float(r.get("gyro_y", r.get("gy", 0.0))) for r in readings])
-    gz = np.array([float(r.get("gyro_z", r.get("gz", 0.0))) for r in readings])
+def _to_float(v) -> float:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return float("nan")
+    return f if math.isfinite(f) else float("nan")
 
-    # Accel magnitude
-    acc_mag = np.sqrt(ax**2 + ay**2 + az**2)
-    gyro_mag = np.sqrt(gx**2 + gy**2 + gz**2)
 
-    accel_var = float(np.var(acc_mag))
-    accel_rms = float(np.sqrt(np.mean(acc_mag**2)))
-    peak_accel = float(np.max(acc_mag)) if len(acc_mag) else 0.0
+def _parse_time(t) -> Optional[float]:
+    """Seconds since epoch from an ISO string or an epoch-ms / epoch-s number."""
+    if t is None:
+        return None
+    if isinstance(t, (int, float)):
+        return t / 1000.0 if t > 1e11 else float(t)
+    try:
+        return datetime.fromisoformat(str(t).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
-    gyro_var = float(np.var(gyro_mag))
-    gyro_rms = float(np.sqrt(np.mean(gyro_mag**2)))
-    angular_vel = float(np.mean(gyro_mag))
 
-    # Jerk (derivative of acceleration)
-    if len(acc_mag) > 1:
-        jerk_series = np.diff(acc_mag) / 0.02  # 50Hz = 0.02s
-        jerk = float(np.sqrt(np.mean(jerk_series**2)))
-    else:
-        jerk = 0.0
+# ---------------------------------------------------------------- IMU
+def normalize_imu_units(readings: List[Dict[str, Any]]):
+    """
+    Return (readings_in_m_s2, unit). The ESP32 firmware sends acceleration in g,
+    the simulator in m/s^2. At rest the gravity magnitude is ~1 in g and ~9.8
+    in m/s^2; a ±2 g sensor can never exceed ~3.5 g, so a median below 4 means g.
+    """
+    rows = []
+    for r in readings:
+        rows.append({
+            "acc_x": _to_float(r.get("acc_x", r.get("ax"))),
+            "acc_y": _to_float(r.get("acc_y", r.get("ay"))),
+            "acc_z": _to_float(r.get("acc_z", r.get("az"))),
+            "gyro_x": _to_float(r.get("gyro_x", r.get("gx"))),
+            "gyro_y": _to_float(r.get("gyro_y", r.get("gy"))),
+            "gyro_z": _to_float(r.get("gyro_z", r.get("gz"))),
+            "t": _parse_time(r.get("timestamp")),
+        })
+    rows = [r for r in rows if all(math.isfinite(r[k]) for k in
+                                   ("acc_x", "acc_y", "acc_z", "gyro_x", "gyro_y", "gyro_z"))]
+    if not rows:
+        return [], None
+    mags = [math.sqrt(r["acc_x"] ** 2 + r["acc_y"] ** 2 + r["acc_z"] ** 2) for r in rows]
+    unit = "g" if float(np.median(mags)) < 4.0 else "m/s^2"
+    if unit == "g":
+        for r in rows:
+            for k in ("acc_x", "acc_y", "acc_z"):
+                r[k] *= G
+    return rows, unit
 
-    # Movement smoothness (higher is smoother, normalized 0..1)
-    smoothness = max(0.0, min(1.0, 1.0 - (jerk / 40.0)))
 
-    # Step periodicity from autocorrelation of vertical/resultant acceleration
-    step_periodicity = 0.8
+def _sample_interval(rows: List[Dict[str, Any]]) -> Optional[float]:
+    ts = [r["t"] for r in rows if r.get("t") is not None]
+    if len(ts) < 2:
+        return None
+    diffs = np.diff(np.array(ts, dtype=float))
+    diffs = diffs[diffs > 0]
+    if not len(diffs):
+        return None
+    dt = float(np.median(diffs))
+    return dt if 0.001 <= dt <= 1.0 else None
+
+
+def analyze_imu(readings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Descriptive IMU statistics from the patient's own readings.
+    Not calibrated: there is no IMU reference cohort to compare against.
+    """
+    rows, unit = normalize_imu_units(readings or [])
+    if not rows:
+        return {"calibrated": False, "sample_count": 0, "units_detected": None,
+                "averages": None, "features": None}
+
+    measured_dt = _sample_interval(rows)
+    dt = measured_dt or DEFAULT_DT
+    arr = {k: np.array([r[k] for r in rows]) for k in ("acc_x", "acc_y", "acc_z", "gyro_x", "gyro_y", "gyro_z")}
+    acc_mag = np.sqrt(arr["acc_x"] ** 2 + arr["acc_y"] ** 2 + arr["acc_z"] ** 2)
+    gyro_mag = np.sqrt(arr["gyro_x"] ** 2 + arr["gyro_y"] ** 2 + arr["gyro_z"] ** 2)
+
+    jerk = float(np.sqrt(np.mean((np.diff(acc_mag) / dt) ** 2))) if len(acc_mag) > 1 else None
+
+    periodicity = None
     if len(acc_mag) >= 50:
-        norm_acc = acc_mag - np.mean(acc_mag)
-        autocorr = np.correlate(norm_acc, norm_acc, mode='full')
-        autocorr = autocorr[len(autocorr)//2:]
-        if len(autocorr) > 25:
-            peaks = np.argsort(autocorr[10:45])
-            if len(peaks):
-                step_periodicity = float(max(0.0, min(1.0, autocorr[10 + peaks[-1]] / (autocorr[0] + 1e-6))))
+        centred = acc_mag - acc_mag.mean()
+        ac = np.correlate(centred, centred, mode="full")[len(centred) - 1:]
+        if ac[0] > 0:
+            # strongest repetition between 0.2 s and 2 s (typical step periods)
+            lo, hi = max(1, int(0.2 / dt)), min(len(ac) - 1, int(2.0 / dt))
+            if hi > lo:
+                periodicity = float(np.clip(ac[lo:hi].max() / ac[0], 0.0, 1.0))
 
+    averages = {k: round(float(v.mean()), 3) for k, v in arr.items()}
     return {
-        "accel_variance": round(accel_var, 4),
-        "accel_rms": round(accel_rms, 4),
-        "peak_accel": round(peak_accel, 4),
-        "gyro_variance": round(gyro_var, 4),
-        "gyro_rms": round(gyro_rms, 4),
-        "angular_velocity": round(angular_vel, 4),
-        "movement_smoothness": round(smoothness, 4),
-        "jerk": round(jerk, 4),
-        "step_periodicity": round(step_periodicity, 4),
-        "sample_count": len(readings),
+        "calibrated": False,
+        "sample_count": len(rows),
+        "duration_s": round(len(rows) * dt, 1),
+        "sample_rate_hz": round(1.0 / dt, 1),
+        "sample_rate_measured": measured_dt is not None,
+        "units_detected": unit,
+        # Per-axis means mostly reflect how the sensor is oriented on the leg
+        # (where gravity points), so they are reported, not used as risk markers.
+        "averages": averages,
+        "features": {
+            "accel_rms": round(float(np.sqrt(np.mean(acc_mag ** 2))), 4),
+            "accel_variance": round(float(np.var(acc_mag)), 4),
+            "peak_accel": round(float(acc_mag.max()), 4),
+            "gyro_rms": round(float(np.sqrt(np.mean(gyro_mag ** 2))), 4),
+            "gyro_variance": round(float(np.var(gyro_mag)), 4),
+            "mean_angular_velocity": round(float(gyro_mag.mean()), 4),
+            "jerk_rms": round(jerk, 4) if jerk is not None else None,
+            "step_periodicity": round(periodicity, 4) if periodicity is not None else None,
+        },
     }
 
-def screen_patient_multimodal(
-    patient: Dict[str, Any],
-    camera_results: List[Dict[str, Any]],
-    imu_readings: Optional[List[Dict[str, Any]]] = None
-) -> Dict[str, Any]:
-    """
-    Main evaluation pipeline:
-    Calculates dynamic OA risk score, sub-scores, SHAP-style explainability, and comparisons.
-    """
-    ref = get_reference()
+
+# ---------------------------------------------------------------- camera gait
+def score_gait(camera_trials: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """Score the patient's own camera gait trials against the reference cohort."""
+    trials = camera_trials or []
+    usable, rejected = [], 0
+    for t in trials:
+        row = {f: _to_float(t.get(f)) for f in FEATURES}
+        if sum(math.isfinite(v) for v in row.values()) >= MIN_MEASURED_FEATURES:
+            usable.append(row)
+        else:
+            rejected += 1
+
+    out: Dict[str, Any] = {"trials_submitted": len(trials), "trials_analyzed": len(usable),
+                           "trials_rejected": rejected}
+    if not usable:
+        out["available"] = False
+        out["reason"] = ("No camera gait trials were recorded for this patient." if not trials else
+                         f"No trial had at least {MIN_MEASURED_FEATURES} of the {len(FEATURES)} gait measurements.")
+        return out
+
     model = get_model()
+    if model is None:
+        out["available"] = False
+        out["reason"] = f"Gait model unavailable ({_model_error})."
+        return out
 
-    # 1. Process Camera Trials
-    df_cam = pd.DataFrame(camera_results) if camera_results else pd.DataFrame([{}])
-    for col in FEATURES:
-        if col not in df_cam.columns:
-            df_cam[col] = ref.get("feature_distributions", {}).get(col, {}).get("mean", 45.0)
-        else:
-            df_cam[col] = pd.to_numeric(df_cam[col], errors="coerce").fillna(
-                ref.get("feature_distributions", {}).get(col, {}).get("mean", 45.0)
-            )
+    ref = get_reference()
+    df = pd.DataFrame(usable, columns=FEATURES)
+    imputed = int(df.isna().sum().sum())
+    for f, b in ref.get("clip_bounds", {}).items():
+        if f in df:
+            df[f] = df[f].clip(lower=b.get("p1"), upper=b.get("p99"))
 
-    # Apply winsorizing clip bounds from reference cohort
-    clip_bounds = ref.get("clip_bounds", {})
-    if clip_bounds:
-        for f in FEATURES:
-            if f in clip_bounds:
-                p1 = clip_bounds[f].get("p1", -999.0)
-                p99 = clip_bounds[f].get("p99", 999.0)
-                df_cam[f] = df_cam[f].clip(lower=p1, upper=p99)
-
-    X = df_cam[FEATURES]
-    if model is not None:
-        try:
-            preds = model.predict(X)
-            scores = model.decision_function(X)
-        except Exception:
-            scores = np.full(len(X), 0.05)
-            preds = np.ones(len(X))
-    else:
-        # Calibrated proxy based on reference cohort distributions
-        scaler_means = ref.get("scaler", {}).get("means", {})
-        scaler_scales = ref.get("scaler", {}).get("scales", {})
-        z_scores = []
-        for _, row in X.iterrows():
-            zs = [(row[f] - scaler_means.get(f, 0.0)) / (scaler_scales.get(f, 1.0) or 1.0) for f in FEATURES]
-            z_scores.append(-float(np.mean(np.abs(zs))) * 0.05 + 0.05)
-        scores = np.array(z_scores)
-        preds = np.where(scores > 0, 1, -1)
-
+    scores = model.decision_function(df[FEATURES])
+    flagged = int((model.predict(df[FEATURES]) == -1).sum())
     mean_score = float(np.mean(scores))
-    abnormal_rate = float(np.mean(preds == -1))
 
-    # Reference scores for percentile calculation (prefer trial-level for 1-2 trials)
-    ref_trial_scores = ref.get("trial_scores", [])
-    ref_participants = ref.get("reference_participants", [])
-    if ref_trial_scores and len(df_cam) <= 3:
-        score_risk = 100.0 * (1.0 - percentile_rank(np.array(ref_trial_scores, dtype=float), mean_score))
-    elif ref_participants:
-        ref_scores = np.array([p["mean_biomechanical_score"] for p in ref_participants], dtype=float)
-        score_risk = 100.0 * (1.0 - percentile_rank(ref_scores, mean_score))
+    # Share of reference trials that look MORE typical than this patient.
+    deviation = round(100.0 * (1.0 - percentile_rank(ref["trial_scores"], mean_score)), 1)
+    if deviation > 97.5:
+        tier = "High"
+    elif deviation > 90.0:
+        tier = "Moderate"
     else:
-        ref_scores = np.array([0.02, 0.03, 0.04, 0.05, 0.06, 0.08])
-        score_risk = 100.0 * (1.0 - percentile_rank(ref_scores, mean_score))
+        tier = "Low"
 
-    if len(df_cam) <= 3:
-        # Continuous abnormal risk for single walk sessions to avoid 0/1 cliff edge
-        if mean_score >= 0.04:
-            abnormal_risk = 0.0
-        elif mean_score >= 0.0:
-            abnormal_risk = float((0.04 - mean_score) / 0.04 * 25.0)
-        else:
-            abnormal_risk = min(100.0, float(25.0 + (-mean_score) / 0.08 * 75.0))
-    else:
-        ref_abnormal = np.array([p["abnormal_trial_rate"] for p in ref_participants], dtype=float) if ref_participants else np.array([0.1, 0.2, 0.3])
-        abnormal_risk = 100.0 * percentile_rank(ref_abnormal, abnormal_rate)
-
-    biomech_screening_score = 0.70 * score_risk + 0.30 * abnormal_risk
-
-    # 2. Process IMU Kinematics
-    imu_feats = extract_imu_features(imu_readings or [])
-    imu_risk_component = (
-        0.30 * min(1.0, imu_feats["gyro_variance"] / 40.0) +
-        0.25 * min(1.0, imu_feats["jerk"] / 25.0) +
-        0.25 * (1.0 - imu_feats["movement_smoothness"]) +
-        0.20 * (1.0 - imu_feats["step_periodicity"])
-    ) * 100.0
-
-    # 3. Patient Clinical & Demographic Risk
-    age = float(patient.get("age") or 0)
-    bmi = float(patient.get("bmi") or 0)
-    pain = float(patient.get("pain_score") or 0)
-    prev_injury = 1.0 if str(patient.get("previous_knee_injury", "")).lower() not in ["none", "", "no"] else 0.0
-
-    age_factor = min(1.0, max(0.0, (age - 35) / 45.0)) if age else 0.1
-    bmi_factor = min(1.0, max(0.0, (bmi - 23) / 15.0)) if bmi else 0.1
-    pain_factor = min(1.0, pain / 10.0)
-    clinical_risk = (0.35 * age_factor + 0.30 * bmi_factor + 0.25 * pain_factor + 0.10 * prev_injury) * 100.0
-
-    # 4. Multimodal Fusion
-    has_imu = bool(imu_readings and len(imu_readings) > 10)
-    if has_imu:
-        final_score = 0.55 * biomech_screening_score + 0.25 * imu_risk_component + 0.20 * clinical_risk
-    else:
-        final_score = 0.75 * biomech_screening_score + 0.25 * clinical_risk
-
-    final_score = float(max(5.0, min(98.0, round(final_score, 1))))
-
-    # Threshold classification (smooth clinical risk bands)
-    p90 = float(ref.get("thresholds", {}).get("p90", 45.0))
-    p97_5 = float(ref.get("thresholds", {}).get("p97_5", 75.0))
-
-    if final_score <= 45.0:
-        risk_category = "LOW PROTOTYPE RISK"
-        badge_variant = "low"
-    elif final_score <= 75.0:
-        risk_category = "MODERATE PROTOTYPE RISK"
-        badge_variant = "moderate"
-    else:
-        risk_category = "HIGH PROTOTYPE RISK"
-        badge_variant = "high"
-
-    # 5. Domain Sub-scores (0-100)
-    gait_asym = float(df_cam["knee_rom_asymmetry_pct"].mean() if "knee_rom_asymmetry_pct" in df_cam else 20.0)
-    step_asym = float(df_cam["step_time_asymmetry_pct"].mean() if "step_time_asymmetry_pct" in df_cam else 15.0)
-    r_knee_rom = float(df_cam["right_knee_rom_deg"].mean() if "right_knee_rom_deg" in df_cam else 55.0)
-    l_knee_rom = float(df_cam["left_knee_rom_deg"].mean() if "left_knee_rom_deg" in df_cam else 55.0)
-    trunk_lean = float(df_cam["trunk_lean_deg"].mean() if "trunk_lean_deg" in df_cam else 3.5)
-
-    sub_scores = {
-        "gait_abnormality": round(float(min(100.0, max(10.0, 0.6 * abnormal_risk + 0.4 * step_asym * 2.5))), 1),
-        "knee_movement": round(float(min(100.0, max(10.0, 100.0 - min(r_knee_rom, l_knee_rom) * 1.4))), 1),
-        "movement_symmetry": round(float(min(100.0, max(10.0, (gait_asym + step_asym) * 1.8))), 1),
-        "pain_indicators": round(float(min(100.0, max(5.0, pain * 10.0))), 1),
-        "imu_movement_pattern": round(float(min(100.0, max(10.0, imu_risk_component if has_imu else 40.0))), 1),
-        "functional_mobility": round(float(min(100.0, max(10.0, 100.0 - (imu_feats["movement_smoothness"] * 70 + (100 - trunk_lean * 8) * 0.3)))), 1),
-    }
-
-    # 6. SHAP-Style Explainable AI Feature Contributions
-    feat_dists = ref.get("feature_distributions", {})
-    contributions = []
-
-    def add_contrib(feat_name: str, label: str, val: float, higher_is_risk: bool, weight: float = 1.0):
-        stat = feat_dists.get(feat_name, {})
-        mean_h = stat.get("mean", val)
-        std_h = stat.get("std", 1.0) or 1.0
-        z = (val - mean_h) / std_h
-        raw_impact = z if higher_is_risk else -z
-        impact = round(float(raw_impact * weight * 12.0), 1)
-        direction = "↑" if impact > 0 else "↓"
-        contributions.append({
-            "feature": label,
-            "patient_value": round(val, 2),
-            "reference_mean": round(mean_h, 2),
-            "impact": impact,
-            "direction": direction,
-            "label": f"{direction} contribution" if abs(impact) >= 2 else "Neutral contribution",
-            "interpretation": f"{label} {'exceeds' if z > 0 else 'is lower than'} healthy cohort reference"
+    dists = ref.get("feature_distributions", {})
+    deviations = []
+    for f in FEATURES:
+        vals = df[f].dropna()
+        stat = dists.get(f)
+        if not len(vals) or not stat or not stat.get("std"):
+            continue
+        value = float(vals.mean())
+        z = (value - stat["mean"]) / stat["std"]
+        deviations.append({
+            "feature": FEATURE_LABELS[f],
+            "key": f,
+            "patient_value": round(value, 2),
+            "reference_mean": round(stat["mean"], 2),
+            "reference_range": [round(stat.get("p5", float("nan")), 2), round(stat.get("p95", float("nan")), 2)],
+            "z_score": round(z, 2),
+            "direction": "above" if z > 0 else "below",
         })
+    deviations.sort(key=lambda d: abs(d["z_score"]), reverse=True)
 
-    add_contrib("knee_rom_asymmetry_pct", "Gait asymmetry", gait_asym, True, 1.2)
-    add_contrib("right_knee_rom_deg", "Knee ROM", min(r_knee_rom, l_knee_rom), False, 1.1)
-    add_contrib("trunk_lean_deg", "Trunk lean angle", trunk_lean, True, 0.9)
-    if has_imu:
-        contributions.append({
-            "feature": "Angular velocity variation",
-            "patient_value": round(imu_feats["gyro_variance"], 2),
-            "reference_mean": 25.0,
-            "impact": round(float((imu_feats["gyro_variance"] - 25.0) * 0.4), 1),
-            "direction": "↑" if imu_feats["gyro_variance"] > 25 else "↓",
-            "label": "↑ contribution" if imu_feats["gyro_variance"] > 25 else "↓ contribution",
-            "interpretation": "Variation in rotational kinematics"
-        })
-        contributions.append({
-            "feature": "Acceleration smoothness",
-            "patient_value": round(imu_feats["movement_smoothness"], 2),
-            "reference_mean": 0.85,
-            "impact": round(float((0.85 - imu_feats["movement_smoothness"]) * 20.0), 1),
-            "direction": "↓" if imu_feats["movement_smoothness"] >= 0.75 else "↑",
-            "label": "↓ contribution" if imu_feats["movement_smoothness"] >= 0.75 else "↑ contribution",
-            "interpretation": "Sub-movement jerk and tremor metric"
-        })
-    if pain > 0:
-        contributions.append({
-            "feature": "Pain score (VAS)",
-            "patient_value": pain,
-            "reference_mean": 0.0,
-            "impact": round(pain * 2.8, 1),
-            "direction": "↑",
-            "label": "↑ contribution",
-            "interpretation": f"Self-reported VAS knee pain ({int(pain)}/10)"
-        })
-
-    # Sort contributions by absolute impact
-    contributions.sort(key=lambda x: abs(x["impact"]), reverse=True)
-
-    # 7. Camera vs IMU Comparison Data
-    comparison = {
-        "camera": {
-            "knee_angle_rom": round(min(r_knee_rom, l_knee_rom), 1),
-            "gait_symmetry": round(100.0 - min(100.0, gait_asym), 1),
-            "stride_duration": round(float(df_cam["stride_duration_sec"].mean() if "stride_duration_sec" in df_cam else 1.05), 2),
-            "cadence": round(float(df_cam["cadence_steps_min"].mean() if "cadence_steps_min" in df_cam else 120.0), 1),
-            "trunk_stability": round(100.0 - min(100.0, trunk_lean * 10), 1),
+    asym = df["knee_rom_asymmetry_pct"].dropna()
+    out.update({
+        "available": True,
+        "deviation_score": deviation,
+        "tier": tier,
+        "mean_model_score": round(mean_score, 5),
+        "trials_flagged_atypical": flagged,
+        "features_imputed": imputed,
+        "feature_deviations": deviations,
+        "knee_rom_symmetry": round(max(0.0, 100.0 - float(asym.mean())), 1) if len(asym) else None,
+        "reference": {
+            "participants": ref.get("n_reference_participants"),
+            "trials": ref.get("n_total_trials"),
+            "moderate_above_percentile": 90.0,
+            "high_above_percentile": 97.5,
         },
-        "imu": {
-            "acceleration_rms": imu_feats["accel_rms"],
-            "angular_velocity": imu_feats["angular_velocity"],
-            "movement_smoothness": round(imu_feats["movement_smoothness"] * 100.0, 1),
-            "jerk_metric": imu_feats["jerk"],
-            "periodicity": round(imu_feats["step_periodicity"] * 100.0, 1),
-        },
-        "multimodal_confidence": round(88.0 + (5.0 if has_imu else 0.0) + (4.0 if len(camera_results) > 10 else 0.0), 1)
-    }
-
-    return {
-        "success": True,
-        "screening_score": final_score,
-        "risk_category": risk_category,
-        "badge_variant": badge_variant,
-        "biomechanical_risk_score": round(float(biomech_screening_score), 1),
-        "clinical_risk_score": round(float(clinical_risk), 1),
-        "mean_biomechanical_score": round(mean_score, 5),
-        "abnormal_trial_rate_pct": round(abnormal_rate * 100.0, 1),
-        "trials_analyzed": len(df_cam),
-        "sub_scores": sub_scores,
-        "feature_contributions": contributions[:6],
-        "explainability": contributions[:6],
-        "contributions": contributions[:6],
-        "comparison": comparison,
-        "threshold_p90": p90,
-        "threshold_p97_5": p97_5,
-        "disclaimer": (
-            "OA Sentinel provides an AI-assisted screening/risk assessment and does not replace clinical diagnosis. "
-            "OA Sentinel is a research and prototype screening system. It does not diagnose osteoarthritis, replace a "
-            "physician, or provide medical treatment recommendations."
-        )
-    }
+    })
+    return out
 
 
-# ============================================================
-# predict() — Public API called by server.py
-# Maps raw IMU sensor readings and patient demographics into
-# the multimodal screener, then transforms the output to the
-# field names the frontend expects.
-# ============================================================
+# ---------------------------------------------------------------- clinical context
+def clinical_risk_factors(patient: Dict[str, Any]) -> List[Dict[str, str]]:
+    """
+    Established knee-OA risk factors present for this patient. Listed, not
+    weighted: there is no outcome data to calibrate weights against.
+    """
+    factors = []
+    age = _to_float(patient.get("age"))
+    bmi = _to_float(patient.get("bmi"))
+    if not math.isfinite(bmi):
+        h, w = _to_float(patient.get("height_cm")), _to_float(patient.get("weight_kg"))
+        if math.isfinite(h) and math.isfinite(w) and h > 0:
+            bmi = w / (h / 100.0) ** 2
+    pain = _to_float(patient.get("pain_score"))
+    injury = str(patient.get("previous_knee_injury") or "").strip().lower()
+    sex = str(patient.get("gender") or patient.get("sex") or "").strip().lower()
 
-def _risk_label(category: str) -> str:
-    """Map risk_category strings to the simple labels used by the frontend."""
-    cat = category.upper()
-    if "HIGH" in cat:
-        return "High"
-    if "MODERATE" in cat:
-        return "Moderate"
-    if "SEVERE" in cat:
-        return "Severe"
-    return "Low"
-
-
-def _recommendation(risk: str, score: float) -> str:
-    if risk in ("High", "Severe"):
-        return (
-            "Refer patient for specialist orthopaedic evaluation. "
-            "Consider X-ray/imaging of the affected knee(s). "
-            "Prescribe physiotherapy and pain management as appropriate."
-        )
-    if risk == "Moderate":
-        return (
-            "Monitor patient with follow-up screening in 3-6 months. "
-            "Encourage low-impact exercise and weight management. "
-            "Consider physiotherapy referral if symptoms persist."
-        )
-    return (
-        "No immediate concern detected. Continue routine wellness checks. "
-        "Encourage regular physical activity and joint-friendly exercises."
-    )
+    if math.isfinite(age) and age >= 50:
+        factors.append({"factor": "Age 50 or over", "value": f"{int(age)} years"})
+    if math.isfinite(bmi) and bmi >= 30:
+        factors.append({"factor": "Obesity (BMI 30 or over)", "value": f"BMI {bmi:.1f}"})
+    elif math.isfinite(bmi) and bmi >= 25:
+        factors.append({"factor": "Overweight (BMI 25-30)", "value": f"BMI {bmi:.1f}"})
+    if injury and injury not in ("none", "no", "false", "0"):
+        factors.append({"factor": "Previous knee injury", "value": str(patient.get("previous_knee_injury"))})
+    if math.isfinite(pain) and pain >= 4:
+        factors.append({"factor": "Knee pain (VAS 4 or more)", "value": f"{pain:g}/10"})
+    if sex in ("female", "f"):
+        factors.append({"factor": "Female sex (higher knee OA prevalence)", "value": "Female"})
+    return factors
 
 
-def _follow_up(risk: str) -> str:
-    if risk in ("High", "Severe"):
-        return "Urgent: Within 2 weeks. Refer to orthopaedic specialist."
-    if risk == "Moderate":
-        return "Schedule follow-up screening in 3-6 months."
-    return "Routine annual screening recommended."
+def _recommendation(tier: str) -> str:
+    if tier == "High":
+        return ("Gait is less typical than 97.5% of reference walking trials. Recommend a clinical knee "
+                "examination by a doctor; imaging only if the examination indicates it.")
+    if tier == "Moderate":
+        return ("Gait is less typical than 90% of reference walking trials. Consider a clinical knee "
+                "examination and repeat the camera gait assessment.")
+    if tier == "Low":
+        return ("Gait is within the typical range of the reference cohort. This does not rule out "
+                "osteoarthritis; review symptoms and the clinical risk factors listed.")
+    return ("No calibrated score: record at least one camera gait trial for this patient. The IMU and "
+            "clinical information below is for the clinician's review only.")
 
 
+def _follow_up(tier: str) -> str:
+    if tier == "High":
+        return "Arrange a doctor's review within 2 weeks."
+    if tier == "Moderate":
+        return "Repeat screening in 3-6 months, sooner if symptoms worsen."
+    if tier == "Low":
+        return "Routine screening; re-assess if knee symptoms develop."
+    return "Complete a camera gait assessment to obtain a score."
+
+
+# ---------------------------------------------------------------- public API
 def predict(
     readings: List[Dict[str, Any]],
     patient: Dict[str, Any],
-    dataset_rows: Optional[List[Dict[str, Any]]] = None,
-    imu_averages: Optional[Dict[str, float]] = None,
+    camera_results: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
-    Public entry point called by server.py ``create_screening``.
+    Build a screening result from the patient's own data.
 
-    Parameters
-    ----------
-    readings : list[dict]
-        Raw MPU6050 sensor readings (acc_x/y/z, gyro_x/y/z, timestamp).
-    patient : dict
-        Patient demographics (age, gender, bmi, height_cm, weight_kg, …).
-    dataset_rows : list[dict] | None
-        Optional uploaded dataset rows (currently unused but reserved for
-        future reference-comparison logic).
-    imu_averages : dict | None
-        Optional 10-second computed mean values for acc and gyro axes.
-
-    Returns
-    -------
-    dict
-        Result dictionary with fields matching what ScreeningResult.js expects.
+    readings       : raw IMU readings from the 10 s test (any accel unit).
+    patient        : patient record (age, gender, bmi/height/weight, pain_score,
+                     previous_knee_injury).
+    camera_results : the patient's own camera gait trials. Reference or
+                     uploaded datasets must NOT be passed here.
     """
-    # Build camera_results from dataset_rows if available, otherwise empty
-    camera_results: List[Dict[str, Any]] = []
-    if dataset_rows:
-        camera_results = dataset_rows
+    gait = score_gait(camera_results)
+    imu = analyze_imu(readings)
+    clinical = clinical_risk_factors(patient)
 
-    # Compute averages if not provided
-    if not imu_averages and readings:
-        try:
-            imu_averages = {
-                "acc_x": round(float(np.mean([float(r.get("acc_x", r.get("ax", 0))) for r in readings])), 3),
-                "acc_y": round(float(np.mean([float(r.get("acc_y", r.get("ay", 0))) for r in readings])), 3),
-                "acc_z": round(float(np.mean([float(r.get("acc_z", r.get("az", 0))) for r in readings])), 3),
-                "gyro_x": round(float(np.mean([float(r.get("gyro_x", r.get("gx", 0))) for r in readings])), 3),
-                "gyro_y": round(float(np.mean([float(r.get("gyro_y", r.get("gy", 0))) for r in readings])), 3),
-                "gyro_z": round(float(np.mean([float(r.get("gyro_z", r.get("gz", 0))) for r in readings])), 3),
-            }
-        except Exception:
-            imu_averages = None
-
-    # Run the multimodal screener
-    raw = screen_patient_multimodal(
-        patient=patient,
-        camera_results=camera_results,
-        imu_readings=readings,
-    )
-
-    # ---- Map output to the frontend field names ----
-    score = raw.get("screening_score", 50.0)
-    risk = _risk_label(raw.get("risk_category", "LOW PROTOTYPE RISK"))
-    sub = raw.get("sub_scores", {})
-
-    # Knee stability: inverse of knee movement abnormality sub-score
-    knee_stability = round(100.0 - sub.get("knee_movement", 40.0), 1)
-    # Movement symmetry: inverse of symmetry abnormality sub-score
-    movement_symmetry = round(100.0 - sub.get("movement_symmetry", 30.0), 1)
-    # Balance score derived from functional mobility
-    balance = round(100.0 - sub.get("functional_mobility", 35.0), 1)
-    # Confidence based on sample count and multimodal coverage
-    n_readings = len(readings) if readings else 0
-    base_conf = 72.0
-    if n_readings >= 100:
-        base_conf += 10.0
-    elif n_readings >= 30:
-        base_conf += 5.0
-    if camera_results:
-        base_conf += 8.0
-    confidence = round(min(97.0, base_conf), 1)
-
-    # Build contributing_factors from feature_contributions
-    contribs = raw.get("feature_contributions", [])
-    contributing_factors = []
-    for c in contribs:
-        contributing_factors.append({
-            "factor": c.get("feature", "Unknown"),
-            "weight": round(min(100.0, max(5.0, abs(c.get("impact", 0)) * 4.5)), 1),
-            "direction": c.get("direction", "↑"),
-        })
-    # Ensure at least one factor
-    if not contributing_factors:
-        contributing_factors = [
-            {"factor": "IMU Motion Pattern", "weight": 35.0, "direction": "↑"},
-            {"factor": "Age Factor", "weight": 25.0, "direction": "↑"},
-            {"factor": "BMI Factor", "weight": 20.0, "direction": "↑"},
-        ]
+    tier = gait["tier"] if gait.get("available") else NOT_DETERMINED
+    deviation = gait.get("deviation_score")
+    deviations = gait.get("feature_deviations", [])
 
     return {
-        "oa_probability": score,
-        "risk_level": risk,
-        "confidence": confidence,
-        "knee_stability_score": knee_stability,
-        "movement_symmetry": movement_symmetry,
-        "balance_score": balance,
-        "contributing_factors": contributing_factors,
-        "recommendation": _recommendation(risk, score),
-        "follow_up": _follow_up(risk),
-        # Preserve the full multimodal output for advanced views
-        "sub_scores": sub,
-        "feature_contributions": contribs,
-        "comparison": raw.get("comparison", {}),
-        "screening_score": score,
-        "risk_category": raw.get("risk_category", ""),
-        "badge_variant": raw.get("badge_variant", "low"),
-        "threshold_p90": raw.get("threshold_p90", 88.08),
-        "threshold_p97_5": raw.get("threshold_p97_5", 96.37),
-        "trials_analyzed": raw.get("trials_analyzed", 0),
-        "imu_features": extract_imu_features(readings) if readings else {},
-        "imu_averages": imu_averages,
-        "disclaimer": raw.get("disclaimer", (
-            "OA Sentinel provides an AI-assisted screening/risk assessment "
-            "and does not replace clinical diagnosis."
-        )),
+        "engine_version": ENGINE_VERSION,
+        "score_type": "gait_deviation_percentile" if gait.get("available") else None,
+        "deviation_score": deviation,
+        "risk_level": tier,
+        "calibrated": bool(gait.get("available")),
+        "risk_basis": ("Camera gait compared with a reference walking cohort "
+                       f"({gait['reference']['trials']} trials, {gait['reference']['participants']} participants)."
+                       if gait.get("available") else gait.get("reason")),
+        "gait": gait,
+        "feature_deviations": deviations,
+        "contributing_factors": [
+            {"factor": d["feature"], "z_score": d["z_score"], "direction": d["direction"],
+             "patient_value": d["patient_value"], "reference_mean": d["reference_mean"]}
+            for d in deviations[:6]
+        ],
+        "movement_symmetry": gait.get("knee_rom_symmetry"),
+        "imu": imu,
+        "imu_averages": imu["averages"],
+        "imu_features": imu["features"],
+        "clinical_risk_factors": clinical,
+        "data_coverage": {
+            "camera_trials": gait.get("trials_analyzed", 0),
+            "imu_samples": imu["sample_count"],
+            "imu_duration_s": imu.get("duration_s"),
+            "clinical_fields": [k for k in ("age", "gender", "bmi", "pain_score", "previous_knee_injury")
+                                if patient.get(k) not in (None, "")],
+        },
+        "recommendation": _recommendation(tier),
+        "follow_up": _follow_up(tier),
+        "method": (
+            "Deviation score = share of reference walking trials (Isolation Forest scores) that look more "
+            "typical than the patient's camera gait. Low <= 90, Moderate <= 97.5, High > 97.5. "
+            "IMU statistics and clinical risk factors are reported but not included in the score because "
+            "no reference or outcome data exists to calibrate them."
+        ),
+        "disclaimer": (
+            "Research prototype. The reference cohort has no diagnosed OA patients, so this score measures "
+            "how atypical the gait is, not the probability of osteoarthritis. It is not a diagnosis."
+        ),
     }

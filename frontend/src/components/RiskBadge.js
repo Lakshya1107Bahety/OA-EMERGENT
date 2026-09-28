@@ -5,6 +5,7 @@ const STYLE = {
   Moderate: "bg-amber-50 text-amber-700",
   High: "bg-orange-50 text-orange-700",
   Severe: "bg-red-50 text-red-600",
+  "Not determined": "bg-slate-100 text-slate-600",
 };
 
 export default function RiskBadge({ level, testid }) {
@@ -24,4 +25,5 @@ export const RISK_COLOR = {
   Moderate: "#F59E0B",
   High: "#F97316",
   Severe: "#EF4444",
+  "Not determined": "#94A3B8",
 };

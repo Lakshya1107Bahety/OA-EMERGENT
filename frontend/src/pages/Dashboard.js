@@ -12,7 +12,8 @@ const MOCK_DATA = {
   total_patients: 0,
   total_screenings: 0,
   high_risk_patients: 0,
-  average_oa_probability: 0,
+  average_deviation_score: null,
+  scored_screenings: 0,
   monthly_screenings: [
     { month: "Apr 2026", count: 0 }, { month: "May 2026", count: 0 },
     { month: "Jun 2026", count: 0 }, { month: "Jul 2026", count: 0 },
@@ -89,7 +90,7 @@ export default function Dashboard() {
         <StatCard icon={Users} label="Total Patients" value={data.total_patients} tone="bg-accent text-primary" testid="stat-total-patients" />
         <StatCard icon={AlertTriangle} label="High-Risk Patients" value={data.high_risk_patients} tone="bg-orange-50 text-orange-600" testid="stat-high-risk" />
         <StatCard icon={Activity} label="Total Screenings" value={data.total_screenings} tone="bg-emerald-50 text-emerald-600" testid="stat-screenings" />
-        <StatCard icon={Gauge} label="Avg OA Probability" value={`${data.average_oa_probability}%`} tone="bg-amber-50 text-amber-600" testid="stat-avg-prob" />
+        <StatCard icon={Gauge} label="Avg Gait Deviation" value={data.average_deviation_score ?? "—"} tone="bg-amber-50 text-amber-600" testid="stat-avg-deviation" />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
@@ -145,8 +146,9 @@ export default function Dashboard() {
 
       <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5 flex items-center justify-between">
         <div>
-          <p className="text-sm text-slate-600">Average Knee Stability Score</p>
-          <p className="font-heading text-3xl font-bold text-secondary">{data.average_stability_score}/100</p>
+          <p className="text-sm text-slate-600">Screenings with a calibrated gait score</p>
+          <p className="font-heading text-3xl font-bold text-secondary">{data.scored_screenings ?? 0}/{data.total_screenings}</p>
+          <p className="text-xs text-slate-500 mt-1">Gait deviation = share of reference walking trials that look more typical. It is not an OA probability.</p>
         </div>
         <Gauge className="w-12 h-12 text-secondary/40" />
       </div>

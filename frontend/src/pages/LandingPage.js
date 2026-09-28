@@ -20,7 +20,7 @@ const stats = [
 
 const features = [
   { icon: Bluetooth, title: "ESP32 Bluetooth", desc: "Connect a wearable MPU6050 over BLE and stream live accelerometer & gyroscope data straight to the browser." },
-  { icon: Brain, title: "AI Risk Engine", desc: "Compares rolling sensor averages against your reference dataset to output OA probability, confidence and risk tier." },
+  { icon: Brain, title: "AI Risk Engine", desc: "Scores camera gait against a reference walking cohort and reports how atypical it is. A screening aid, not an OA probability or diagnosis." },
   { icon: Bone, title: "Movement Tests", desc: "MediaPipe pose tracking scores sit-to-stand, balance, gait, squat and Timed Up & Go with real-time joint angles." },
   { icon: Wifi, title: "Offline-First", desc: "Register patients and capture readings without internet; everything auto-syncs when connectivity returns." },
 ];
@@ -95,9 +95,9 @@ export default function LandingPage() {
               initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}
               className="absolute -bottom-6 -left-4 bg-white/90 backdrop-blur rounded-2xl shadow-xl p-4 ring-1 ring-emerald-900/10"
             >
-              <p className="text-xs text-muted-foreground">OA Probability</p>
-              <p className="font-heading text-3xl font-bold text-primary">72%</p>
-              <p className="text-xs font-semibold text-orange-500">High Risk · 91% conf.</p>
+              <p className="text-xs text-muted-foreground">Gait deviation (example)</p>
+              <p className="font-heading text-3xl font-bold text-primary">93.4</p>
+              <p className="text-xs font-semibold text-amber-600">Moderate deviation</p>
             </motion.div>
             <motion.div
               initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.65 }}

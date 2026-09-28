@@ -91,8 +91,8 @@ export default function PatientRecords() {
                 </div>
               </div>
               <div className="flex items-center gap-4 shrink-0">
-                {p.latest_probability != null && (
-                  <span className="font-heading font-bold text-slate-700 hidden sm:block">{p.latest_probability}%</span>
+                {p.latest_deviation_score != null && (
+                  <span className="font-heading font-bold text-slate-700 hidden sm:block" title="Gait deviation percentile">{p.latest_deviation_score}</span>
                 )}
                 <RiskBadge level={p.latest_risk} testid={`patient-risk-${p.id}`} />
                 <Button size="sm" variant="ghost" className="rounded-xl" onClick={(e) => { e.stopPropagation(); navigate(`/app/screening/${p.id}`); }} data-testid={`screen-patient-${p.id}`}>

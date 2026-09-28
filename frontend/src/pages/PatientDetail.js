@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { scoreOf } from "@/lib/score";
 import RiskBadge from "@/components/RiskBadge";
 import { generateReport } from "@/lib/report";
 import { toast } from "sonner";
@@ -84,12 +85,12 @@ export default function PatientDetail() {
               <div key={s.id} className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-4 flex items-center justify-between gap-4" data-testid={`screening-row-${s.id}`}>
                 <div className="flex items-center gap-4">
                   <div className="text-center">
-                    <p className="font-heading text-2xl font-bold text-primary">{s.result?.oa_probability}%</p>
+                    <p className="font-heading text-2xl font-bold text-primary" title={scoreOf(s.result).label}>{scoreOf(s.result).text}</p>
                     <RiskBadge level={s.result?.risk_level} />
                   </div>
                   <div className="text-sm text-slate-600">
                     <p>{new Date(s.created_at).toLocaleString()}</p>
-                    <p>Stability {s.result?.knee_stability_score}/100 · {s.reading_count} readings</p>
+                    <p>{scoreOf(s.result).label} · {s.reading_count ?? 0} IMU readings</p>
                     <p className="text-xs mt-1">Review: <b className="capitalize">{s.review_status}</b></p>
                   </div>
                 </div>

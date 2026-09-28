@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import QRCode from "qrcode";
+import { scoreOf } from "@/lib/score";
 
 export async function generateReport(patient, screening) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
@@ -46,10 +47,11 @@ export async function generateReport(patient, screening) {
   doc.roundedRect(40, y - 14, W - 80, 90, 8, 8, "F");
   doc.setFontSize(28);
   doc.setTextColor(...green);
-  doc.text(`${r.oa_probability}%`, 60, y + 24);
+  const sc = scoreOf(r);
+  doc.text(sc.text, 60, y + 24);
   doc.setFontSize(11);
   doc.setTextColor(100, 116, 139);
-  doc.text("OA Probability", 60, y + 44);
+  doc.text(sc.label, 60, y + 44);
 
   doc.setTextColor(30, 41, 59);
   doc.setFont("helvetica", "bold");
@@ -57,9 +59,11 @@ export async function generateReport(patient, screening) {
   doc.text(`Risk Level: ${r.risk_level}`, 220, y + 10);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(`Confidence: ${r.confidence}%`, 220, y + 30);
-  doc.text(`Knee Stability: ${r.knee_stability_score}/100`, 220, y + 48);
-  doc.text(`Movement Symmetry: ${r.movement_symmetry}%   Balance: ${r.balance_score}/100`, 220, y + 66);
+  const cov = r.data_coverage || {};
+  doc.text(`Camera gait trials: ${cov.camera_trials ?? 0}   IMU samples: ${cov.imu_samples ?? 0}`, 220, y + 30);
+  doc.text(`Knee ROM symmetry: ${r.movement_symmetry != null ? r.movement_symmetry + "%" : "not measured"}`, 220, y + 48);
+  doc.setFontSize(9);
+  doc.text(doc.splitTextToSize(r.disclaimer || "Legacy result from the uncalibrated engine; not a probability of OA.", W - 280), 220, y + 64);
 
   y += 110;
   doc.setFont("helvetica", "bold");
@@ -102,7 +106,7 @@ export async function generateReport(patient, screening) {
   // QR code
   const qrPayload = JSON.stringify({
     id: screening.id, patient: patient.name, age: patient.age,
-    oa: r.oa_probability, risk: r.risk_level, date: screening.created_at,
+    score: scoreOf(r).text, score_type: scoreOf(r).label, risk: r.risk_level, date: screening.created_at,
   });
   const qrData = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 });
   doc.addImage(qrData, "PNG", W - 140, 100, 100, 100);

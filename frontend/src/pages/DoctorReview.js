@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { scoreOf } from "@/lib/score";
 import RiskBadge from "@/components/RiskBadge";
 import { toast } from "sonner";
 import { Loader2, Stethoscope, Eye } from "lucide-react";
@@ -76,13 +77,13 @@ export default function DoctorReview() {
             <div key={s.id} className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-4 flex flex-wrap items-center justify-between gap-4" data-testid={`review-card-${s.id}`}>
               <div className="flex items-center gap-4">
                 <div className="text-center">
-                  <p className="font-heading text-2xl font-bold text-primary">{s.result?.oa_probability}%</p>
+                  <p className="font-heading text-2xl font-bold text-primary" title={scoreOf(s.result).label}>{scoreOf(s.result).text}</p>
                   <RiskBadge level={s.result?.risk_level} />
                 </div>
                 <div className="text-sm text-slate-600">
                   <p className="font-semibold text-slate-800">{s.patient_name}</p>
                   <p>{s.patient_village || "—"} · {new Date(s.created_at).toLocaleDateString()}</p>
-                  <p className="text-xs">Stability {s.result?.knee_stability_score}/100 · Confidence {s.result?.confidence}%</p>
+                  <p className="text-xs">{scoreOf(s.result).label} · {s.result?.data_coverage?.camera_trials ?? 0} camera trial(s) · {s.reading_count ?? 0} IMU readings</p>
                 </div>
               </div>
               <div className="flex gap-2">
