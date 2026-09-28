@@ -43,6 +43,7 @@ export function decodeBinaryPacket(bytes) {
       acc_x: raw[0] / ACC_LSB_PER_G, acc_y: raw[1] / ACC_LSB_PER_G, acc_z: raw[2] / ACC_LSB_PER_G,
       gyro_x: raw[3] / GYRO_LSB_PER_DPS, gyro_y: raw[4] / GYRO_LSB_PER_DPS, gyro_z: raw[5] / GYRO_LSB_PER_DPS,
       timestamp: new Date().toISOString(),
+      device_ms: dv.getUint32(1, true), // ESP32 clock: lets the app count dropped samples
     },
     deviceMs: dv.getUint32(1, true),
   };

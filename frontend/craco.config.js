@@ -95,6 +95,12 @@ if (isDevServer && process.env.DISABLE_EMERGENT_OVERLAY !== "true") {
 }
 
 let webpackConfig = {
+  // Let Jest resolve the same "@/..." import alias as webpack.
+  jest: {
+    configure: {
+      moduleNameMapper: { "^@/(.*)$": "<rootDir>/src/$1" },
+    },
+  },
   eslint: {
     configure: {
       extends: ["plugin:react-hooks/recommended"],

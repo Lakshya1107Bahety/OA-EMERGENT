@@ -12,6 +12,7 @@ import {
 
 const NAV = [
   { to: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/app/assess/new", label: "New Assessment", icon: Activity },
   { to: "/app/assessment", label: "Patient Assessment", icon: HeartPulse },
   { to: "/app/camera", label: "Live Camera Analysis", icon: Camera },
   { to: "/app/imu", label: "IMU / Wearable Data", icon: RadioTower },

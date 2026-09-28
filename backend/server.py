@@ -161,7 +161,14 @@ class PatientInput(BaseModel):
     phone: Optional[str] = None
     medical_history: Optional[str] = None
     pain_score: Optional[float] = Field(default=None, ge=0, le=10)  # VAS 0-10
-    previous_knee_injury: Optional[str] = None
+    previous_knee_injury: Optional[str] = None  # also "prior injury/surgery"
+    # Screening-flow intake (all optional so older clients keep working)
+    block: Optional[str] = None
+    family_history_oa: Optional[bool] = None
+    diabetes: Optional[bool] = None
+    hypertension: Optional[bool] = None
+    symptom_duration_months: Optional[float] = Field(default=None, ge=0, le=600)
+    affected_side: Optional[str] = None  # left | right | bilateral
 
 
 class SensorReading(BaseModel):
@@ -193,9 +200,15 @@ class ScreeningInput(BaseModel):
     patient_id: str
     readings: List[SensorReading] = []
     camera_results: Optional[List[Dict[str, Any]]] = None  # this patient's own gait trials
+    imu_trials: Optional[List[List[SensorReading]]] = None  # one list of readings per walking trial
     imu_averages: Optional[Dict[str, float]] = None  # ignored: recomputed from readings
     session_id: Optional[str] = None
     is_simulated: Optional[bool] = False
+    # Screening-flow extras, stored with the screening
+    source: Optional[str] = None
+    trial_metadata: Optional[Dict[str, Any]] = None
+    clinician_notes: Optional[str] = None
+    recommended_action: Optional[str] = None
 
 
 class DoctorReviewInput(BaseModel):
@@ -285,6 +298,22 @@ async def list_patients(search: Optional[str] = None, user: dict = Depends(get_c
         p["screening_count"] = await db.screenings.count_documents({"patient_id": pid})
         out.append(p)
     return out
+
+
+@api.put("/patients/{patient_id}")
+async def update_patient(patient_id: str, body: PatientInput, user: dict = Depends(get_current_user)):
+    """Update intake details (screening flow: going back to step 1 after saving)."""
+    if not ObjectId.is_valid(patient_id):
+        raise HTTPException(status_code=404, detail="Patient not found")
+    doc = body.model_dump()
+    if doc.get("bmi") is None and doc.get("height_cm") and doc.get("weight_kg"):
+        h = doc["height_cm"] / 100.0
+        if h > 0:
+            doc["bmi"] = round(doc["weight_kg"] / (h * h), 1)
+    if not await db.patients.find_one({"_id": ObjectId(patient_id)}):
+        raise HTTPException(status_code=404, detail="Patient not found")
+    await db.patients.update_one({"_id": ObjectId(patient_id)}, {"$set": {**doc, "updated_at": now_iso()}})
+    return clean(await db.patients.find_one({"_id": ObjectId(patient_id)}))
 
 
 @api.get("/patients/{patient_id}")
@@ -611,18 +640,30 @@ async def _find_patient(patient_id) -> Optional[dict]:
     return await db.patients.find_one({"_id": ObjectId(str(patient_id))})
 
 
-@api.post("/screenings")
-async def create_screening(body: ScreeningInput, user: dict = Depends(get_current_user)):
-    patient = await db.patients.find_one({"_id": ObjectId(body.patient_id)})
+async def _analyze(body: ScreeningInput):
+    patient = await _find_patient(body.patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    readings = [r.model_dump() for r in body.readings]
+    imu_trials = [[r.model_dump() for r in t] for t in (body.imu_trials or []) if t]
+    readings = [r.model_dump() for r in body.readings] or [r for t in imu_trials for r in t]
     if not readings and not body.camera_results:
         raise HTTPException(status_code=400, detail="No sensor readings or camera gait trials provided")
-
     # Only this patient's own data is scored. Reference/uploaded datasets are
     # never passed in as if they were the patient's camera trials.
-    result = prediction_engine.predict(readings, clean(patient), body.camera_results)
+    result = prediction_engine.predict(readings, clean(patient), body.camera_results, imu_trials=imu_trials or None)
+    return patient, readings, result
+
+
+@api.post("/assessments/analyze")
+async def analyze_assessment(body: ScreeningInput, user: dict = Depends(get_current_user)):
+    """Run the analysis without saving (screening flow step 4)."""
+    _, _, result = await _analyze(body)
+    return {"result": result}
+
+
+@api.post("/screenings")
+async def create_screening(body: ScreeningInput, user: dict = Depends(get_current_user)):
+    patient, readings, result = await _analyze(body)
 
     latest_movement = await db.movement_assessments.find_one(
         {"patient_id": body.patient_id}, sort=[("created_at", -1)]
@@ -644,6 +685,10 @@ async def create_screening(body: ScreeningInput, user: dict = Depends(get_curren
         "camera_trial_count": len(body.camera_results or []),
         "session_id": body.session_id,
         "is_simulated": body.is_simulated or False,
+        "source": body.source,
+        "trial_metadata": body.trial_metadata,
+        "clinician_notes": body.clinician_notes,
+        "recommended_action": body.recommended_action,
         "result": result,
         "movement_summary": movement_summary,
         "created_by": user["id"],
@@ -765,7 +810,12 @@ async def ai_summary(screening_id: str, user: dict = Depends(get_current_user)):
 async def analytics_summary(user: dict = Depends(get_current_user)):
     total_patients = await db.patients.count_documents({})
     total_screenings = await db.screenings.count_documents({})
-    high_risk = await db.screenings.count_documents({"result.risk_level": {"$in": ["High", "Severe"]}})
+    # High-risk patients: distinct patients whose most recent screening is High/Severe
+    latest_level: Dict[str, Any] = {}
+    for s in sorted(await db.screenings.find({}).to_list(5000), key=lambda x: x.get("created_at", "")):
+        if isinstance(s.get("result"), dict):
+            latest_level[s.get("patient_id")] = s["result"].get("risk_level")
+    high_risk = sum(1 for lvl in latest_level.values() if lvl in ("High", "Severe"))
 
     screenings = await db.screenings.find({}).to_list(5000)
     patients = await db.patients.find({}).to_list(5000)

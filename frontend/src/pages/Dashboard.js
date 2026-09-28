@@ -1,13 +1,19 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { listOpenDrafts } from "@/flow/draftStore";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
-import { Users, AlertTriangle, Activity, Gauge, Loader2, WifiOff } from "lucide-react";
+import { Users, AlertTriangle, Activity, Gauge, Loader2, WifiOff, UserPlus, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RISK_COLOR } from "@/components/RiskBadge";
+
+// Analytics views show masked identifiers only (e.g. "A•••• K•••").
+const maskName = (name = "") =>
+  name.trim().split(/\s+/).map((w) => (w ? w[0] + "•".repeat(Math.min(4, Math.max(2, w.length - 1))) : "")).join(" ");
 
 const StatCard = ({ icon: Icon, label, value, tone, testid }) => (
   <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5" data-testid={testid}>
@@ -31,6 +37,9 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [drafts, setDrafts] = useState([]);
+
+  useEffect(() => { listOpenDrafts().then((d) => setDrafts(d.filter((x) => x.patient).slice(0, 3))); }, []);
 
   // Only real numbers from the backend are shown; never placeholder figures.
   // api.js waits for a sleeping backend to wake up before this request is sent.
@@ -43,8 +52,43 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [attempt]);
 
+  const top = (
+    <>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-heading text-3xl font-bold text-slate-900">Analytics Dashboard</h1>
+          <p className="text-slate-600">Welcome back, {user?.name}. Population-level OA screening insights.</p>
+        </div>
+        <Button asChild size="lg" className="h-12 rounded-xl px-6 text-base" data-testid="new-assessment-button">
+          <Link to="/app/assess/new"><UserPlus className="mr-2 h-5 w-5" aria-hidden="true" /> New Patient Assessment</Link>
+        </Button>
+      </div>
+
+      {drafts.length > 0 && (
+        <section aria-labelledby="resume-heading" className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
+          <h2 id="resume-heading" className="flex items-center gap-2 text-sm font-semibold text-sky-900">
+            <History className="h-4 w-4" aria-hidden="true" /> Unfinished assessments on this device
+          </h2>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {drafts.map((d) => (
+              <li key={d.draftId}>
+                <Link to={`/app/assess/${d.draftId}`} className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm text-slate-800 shadow-sm ring-1 ring-sky-200 hover:bg-sky-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                  Resume: {maskName(d.patient.fullName)} · {new Date(d.updatedAt).toLocaleDateString()}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+    </>
+  );
+
   if (!data) {
-    return error ? (
+    return (
+      <div className="space-y-6">
+        {top}
+        {error ? (
       <div className="flex flex-col items-center justify-center h-64 gap-3 text-center" data-testid="dashboard-error">
         <WifiOff className="w-8 h-8 text-red-500" aria-hidden="true" />
         <p className="text-sm text-slate-700 max-w-sm">Couldn't load analytics from the server. No numbers are shown until real data is available.</p>
@@ -55,15 +99,14 @@ export default function Dashboard() {
         <Loader2 className="w-8 h-8 animate-spin text-primary" aria-hidden="true" />
         <p className="text-sm text-slate-500">Loading analytics…</p>
       </div>
+        )}
+      </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-heading text-3xl font-bold text-slate-900">Analytics Dashboard</h1>
-        <p className="text-slate-600">Welcome back, {user?.name}. Population-level OA screening insights.</p>
-      </div>
+      {top}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Users} label="Total Patients" value={data.total_patients} tone="bg-accent text-primary" testid="stat-total-patients" />
