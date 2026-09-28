@@ -5,6 +5,8 @@
 //        service 12345678-1234-1234-1234-1234567890ab, notify char abcd1234-5678-90ab-cdef-1234567890ab
 //        packet  "millis,ax,ay,az,gx,gy,gz"  (accel in g, gyro in deg/s, no newline)
 //   2. Nordic UART Service (NUS) sketches, e.g. the standalone BLE serial monitor.
+//   3. USB cable (Web Serial, connectSerial): the text lines the firmware prints
+//      on the serial port at 115200 baud, same as the Arduino Serial Monitor.
 //
 // Accepted packet formats:
 //   17-byte binary [0xA5][uint32 ms][int16 ax ay az gx gy gz] (current firmware default)
@@ -52,6 +54,8 @@ const G = 9.80665;
 const MAX_BUFFER = 1024;
 const UNIT_SAMPLES = 10; // readings used to lock the accelerometer unit
 
+const toHex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(" ");
+
 export function bleSupported() {
   return typeof navigator !== "undefined" && !!navigator.bluetooth;
 }
@@ -81,15 +85,21 @@ function parseJSON(t) {
   return complete(r) ? toReading(r) : null;
 }
 
-// "AX:0.1 AY:0.2", "Acceleration X: 0.1, Y: 0.2", "gyro_x=3" ...
+// "AX:0.1 AY:0.2", "Acceleration X: 0.1, Y: 0.2", "gyro_x=3",
+// "Acc(g): X=0.01 Y=0.02 Z=1.00 | Gyro(°/s): X=1.2 Y=0.3 Z=-0.4" ...
+// A bare "Acc"/"Gyro" word (e.g. before "(g):") sets the group for the X/Y/Z that follow.
 function parseLabelled(t) {
-  const re = /([A-Za-z][A-Za-z_ ]*?)\s*[:=]\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)/g;
+  const re = /([A-Za-z][A-Za-z_ ]*?)\s*[:=]\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)|\b(acc|gyr|rot)/gi;
   const radians = /rad/i.test(t);
   const out = {};
   let group = null;
   let found = 0;
   let m;
   while ((m = re.exec(t))) {
+    if (m[3]) {
+      group = m[3].toLowerCase() === "acc" ? "acc" : "gyro";
+      continue;
+    }
     const key = m[1].toLowerCase().replace(/[^a-z]/g, "");
     if (key.includes("acc")) group = "acc";
     else if (key.includes("gyr") || key.includes("rot")) group = "gyro";
@@ -107,15 +117,26 @@ function parseLabelled(t) {
   return complete(out) ? toReading(out) : null;
 }
 
+/** Boot/status text such as "BLE service started..." (no numeric readings in it). */
+export function isStatusLine(t) {
+  return !/\d\s*[,=:]|[=:]\s*-?\d/.test(t);
+}
+
 function parseNumeric(t) {
   let parts = t.split(/[,;\s|]+/).filter(Boolean).map(Number);
   if (parts.some((n) => !Number.isFinite(n))) parts = parts.filter((n) => Number.isFinite(n));
-  // "millis,ax,ay,az,gx,gy,gz" from the OA_IMU firmware: drop the timestamp
-  if (parts.length === 7 && Number.isInteger(parts[0]) && parts[0] >= 0) parts = parts.slice(1);
+  // "millis,ax,ay,az,gx,gy,gz" from the OA_IMU firmware: keep the ESP32 clock
+  let deviceMs = null;
+  if (parts.length === 7 && Number.isInteger(parts[0]) && parts[0] >= 0) {
+    deviceMs = parts[0];
+    parts = parts.slice(1);
+  }
   if (parts.length < 6) return null;
   const r = {};
   AXIS_KEYS.forEach((k, i) => (r[k] = parts[i]));
-  return toReading(r);
+  const out = toReading(r);
+  if (deviceMs != null) out.device_ms = deviceMs;
+  return out;
 }
 
 export function parsePacket(text) {
@@ -190,7 +211,7 @@ export async function connectBLE({ onReading, onRaw, onDisconnect }) {
     // A text packet of exactly 20 bytes that doesn't parse was almost certainly
     // cut off by the default BLE packet size (firmware without binary mode).
     const truncated = !r && byteLength === DEFAULT_MTU_PAYLOAD;
-    if (onRaw) onRaw(packet, !!r, { truncated });
+    if (onRaw) onRaw(packet, !!r, { truncated, info: !r && !truncated && isStatusLine(packet) });
     if (r && onReading) onReading(normalize(r));
   };
 
@@ -206,6 +227,12 @@ export async function connectBLE({ onReading, onRaw, onDisconnect }) {
         onRaw(`[bin] t=${bin.deviceMs} a=${f(r.acc_x)},${f(r.acc_y)},${f(r.acc_z)}g g=${f(r.gyro_x)},${f(r.gyro_y)},${f(r.gyro_z)}°/s`, true, { truncated: false });
       }
       if (onReading) onReading(normalize(r));
+      return;
+    }
+
+    // Binary data that is not our 17-byte packet: show it as hex so it can be identified.
+    if (bytes.some((b) => b < 9 || (b > 13 && b < 32) || b === 127)) {
+      if (onRaw) onRaw(`[hex ${bytes.length} B] ${toHex(bytes)}`, false, { truncated: false });
       return;
     }
 
@@ -235,6 +262,73 @@ export async function connectBLE({ onReading, onRaw, onDisconnect }) {
       try { ch.removeEventListener("characteristicvaluechanged", handler); } catch {}
       try { device.removeEventListener("gattserverdisconnected", onGattDisc); } catch {}
       try { device.gatt.disconnect(); } catch {}
+    },
+  };
+}
+
+// ---- USB serial (Web Serial API, Chrome/Edge on desktop) ------------------
+// Reads the same "millis,ax,ay,az,gx,gy,gz" lines the Arduino Serial Monitor
+// shows. Only one program can open the port: close the Arduino Serial Monitor first.
+export function serialSupported() {
+  return typeof navigator !== "undefined" && !!navigator.serial;
+}
+
+export async function connectSerial({ onReading, onRaw, onDisconnect, baudRate = 115200 }) {
+  if (!serialSupported()) throw new Error("USB serial needs Chrome or Edge on a computer.");
+  const port = await navigator.serial.requestPort();
+  try {
+    await port.open({ baudRate });
+  } catch (e) {
+    throw new Error("Couldn't open the USB port. Close the Arduino Serial Monitor (or any other program using it) and try again.");
+  }
+
+  const decoder = new TextDecoder();
+  const normalize = createUnitNormalizer();
+  let buffer = "";
+  let userClosed = false;
+  let reader = null;
+
+  const handleLine = (line) => {
+    const t = line.trim();
+    if (!t) return;
+    const r = parsePacket(t);
+    // Boot and status messages such as "[BLE] Advertising..." are not data.
+    const info = !r && isStatusLine(t);
+    if (onRaw) onRaw(t, !!r, { truncated: false, info });
+    if (r && onReading) onReading(normalize(r));
+  };
+
+  (async () => {
+    try {
+      while (port.readable && !userClosed) {
+        reader = port.readable.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split(/\r?\n|\r/);
+            buffer = lines.pop();
+            if (buffer.length > MAX_BUFFER) buffer = "";
+            lines.forEach(handleLine);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      }
+    } catch {
+      // cable unplugged or device reset: handled below
+    }
+    try { await port.close(); } catch {}
+    if (!userClosed && onDisconnect) onDisconnect();
+  })();
+
+  return {
+    deviceName: "ESP32 (USB cable)",
+    profile: "USB serial",
+    disconnect: () => {
+      userClosed = true;
+      try { reader?.cancel(); } catch {}
     },
   };
 }

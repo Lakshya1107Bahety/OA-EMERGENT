@@ -1,12 +1,13 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Info, FlaskConical } from "lucide-react";
 import CameraPanel from "@/components/CameraPanel";
 import { Button } from "@/components/ui/button";
 import { useAssessment } from "../AssessmentContext";
-import { USE_MOCK } from "../api";
+import { USE_MOCK, flowApi, isNetworkError, errorText } from "../api";
 import FlowNav from "../components/FlowNav";
 import TrialStrip from "../components/TrialStrip";
+import CameraTrialAnalysis from "../components/CameraTrialAnalysis";
 
 /** @typedef {import("../types").CameraTrial} CameraTrial */
 
@@ -17,6 +18,7 @@ const FEATURE_KEYS = [
 ];
 const MIN_MEASURED = 6; // same rule as the backend model (MIN_MEASURED_FEATURES)
 const MIN_FRAMES = 5;
+const MIN_SECONDS = 3; // shorter recordings cannot contain enough steps to measure gait
 
 /** Demo-only trial (mock mode): values near the reference cohort, clearly marked. */
 function demoFeatures() {
@@ -44,6 +46,23 @@ export default function Step2CameraCapture({ nav }) {
   const trials = draft.cameraTrials;
   const required = draft.trialsRequired;
   const usable = trials.filter((t) => t.accepted).length;
+  const [preview, setPreview] = useState({ status: "idle" });
+  const runRef = useRef(0);
+
+  // Score the usable trials so far with the backend gait model after every change.
+  const usableKey = trials.filter((t) => t.accepted).map((t) => t.startedAt).join("|");
+  useEffect(() => {
+    if (!usableKey) { setPreview({ status: "idle" }); return; }
+    if (!draft.patient?.serverId) { setPreview({ status: "offline" }); return; }
+    const run = ++runRef.current;
+    setPreview({ status: "loading" });
+    flowApi.analyze({ ...draft, imu: null })
+      .then((result) => run === runRef.current && setPreview({ status: "ok", result }))
+      .catch((err) => run === runRef.current &&
+        setPreview(isNetworkError(err) ? { status: "offline" } : { status: "error", error: errorText(err) }));
+    // Only re-score when the set of usable trials changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usableKey]);
 
   const save = (next, trialsRequired = required) =>
     update("camera", { cameraTrials: next, trialsRequired }, { invalidate: true });
@@ -53,7 +72,8 @@ export default function Step2CameraCapture({ nav }) {
     for (const k of FEATURE_KEYS) features[k] = summary[k] ?? null;
     const missing = FEATURE_KEYS.filter((k) => features[k] == null).length;
     const walking = isDemo || (summary.frames_captured || 0) >= MIN_FRAMES;
-    const accepted = walking && FEATURE_KEYS.length - missing >= MIN_MEASURED;
+    const longEnough = isDemo || (summary.duration_sec || 0) >= MIN_SECONDS;
+    const accepted = walking && longEnough && FEATURE_KEYS.length - missing >= MIN_MEASURED;
     /** @type {CameraTrial} */
     const trial = {
       index: (trials.at(-1)?.index || 0) + 1,
@@ -68,9 +88,11 @@ export default function Step2CameraCapture({ nav }) {
     };
     save([...trials, trial]);
     if (accepted) toast.success(`Trial ${trial.index} recorded (${10 - missing}/10 measurements).`);
-    else toast.error(walking
-      ? `Trial ${trial.index} not usable: only ${10 - missing}/10 measurements captured. Walk fully in view and try again.`
-      : `Trial ${trial.index} not usable: no walking detected. Repeat the walk in view of the camera.`);
+    else toast.error(!walking
+      ? `Trial ${trial.index} not usable: no walking detected. Repeat the walk in view of the camera.`
+      : !longEnough
+        ? `Trial ${trial.index} not usable: only ${trial.durationSec}s recorded. Record at least ${MIN_SECONDS} seconds of walking.`
+        : `Trial ${trial.index} not usable: only ${10 - missing}/10 measurements captured. Walk fully in view and try again.`);
   };
 
   const remove = (t) => save(trials.filter((x) => x !== t));
@@ -95,7 +117,7 @@ export default function Step2CameraCapture({ nav }) {
           <ol className="mt-1 list-decimal pl-5 space-y-0.5">
             <li>Place the phone/laptop at hip height, 3–4 m away, side-on to the walking path.</li>
             <li>Tap <strong>Enable Webcam</strong>, then <strong>Start 5-Meter Test</strong>.</li>
-            <li>Patient walks at a comfortable pace across the frame; tap <strong>Stop Recording</strong> at the end.</li>
+            <li>Patient walks at a comfortable pace across the frame, side-on to the camera, for at least {MIN_SECONDS} seconds; tap <strong>Stop Recording</strong> at the end.</li>
             <li>Repeat until {required} usable trials are recorded. Only the measurements and one small snapshot per trial are kept, never video.</li>
           </ol>
         </div>
@@ -116,6 +138,8 @@ export default function Step2CameraCapture({ nav }) {
       </div>
 
       <CameraPanel activeTestId="walk_5m" hideTestSelector overlayGuide={<WalkGuide />} onTrialComplete={(s) => addTrial(s)} />
+
+      <CameraTrialAnalysis trial={trials.at(-1)} preview={preview} usableCount={usable} />
 
       <section aria-labelledby="camera-trials" className="rounded-2xl border border-emerald-900/10 bg-white p-4 shadow-sm">
         <h2 id="camera-trials" className="sr-only">Recorded trials</h2>

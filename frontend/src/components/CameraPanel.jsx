@@ -357,15 +357,12 @@ export default function CameraPanel({
               </Button>
             </>
           ) : (
-            <Button onClick={startCamera} size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2 font-semibold">
-              <Camera className="w-4 h-4" />
-              Enable Camera
-            </Button>
+            <p className="text-xs text-slate-500">Camera off. Use <strong>Enable Webcam</strong> above to start.</p>
           )}
         </div>
 
         {/* Real-time Angle Badges */}
-        <div className="flex items-center gap-2 font-mono text-xs">
+        <div className="flex flex-wrap items-center gap-2 font-mono text-xs" aria-live="off">
           <div className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200">
             <span className="text-[10px] text-amber-600 block font-sans">R Knee</span>
             {liveMetrics.rightKnee != null ? `${liveMetrics.rightKnee}°` : "—"}
@@ -373,6 +370,14 @@ export default function CameraPanel({
           <div className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200">
             <span className="text-[10px] text-amber-600 block font-sans">L Knee</span>
             {liveMetrics.leftKnee != null ? `${liveMetrics.leftKnee}°` : "—"}
+          </div>
+          <div className="px-2.5 py-1 rounded-lg bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 text-violet-900 dark:text-violet-200">
+            <span className="text-[10px] text-violet-600 block font-sans">R Hip</span>
+            {liveMetrics.rightHip != null ? `${liveMetrics.rightHip}°` : "—"}
+          </div>
+          <div className="px-2.5 py-1 rounded-lg bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 text-violet-900 dark:text-violet-200">
+            <span className="text-[10px] text-violet-600 block font-sans">L Hip</span>
+            {liveMetrics.leftHip != null ? `${liveMetrics.leftHip}°` : "—"}
           </div>
           <div className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200">
             <span className="text-[10px] text-blue-600 block font-sans">Trunk Lean</span>

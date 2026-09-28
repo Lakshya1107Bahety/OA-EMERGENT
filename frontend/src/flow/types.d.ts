@@ -83,7 +83,7 @@ export interface ImuTrial {
 }
 
 export interface ImuRecording {
-  device: { name: string; source: "ble" | "simulator"; connectedAt: string };
+  device: { name: string; source: "ble" | "usb" | "simulator"; connectedAt: string };
   trials: ImuTrial[];
 }
 

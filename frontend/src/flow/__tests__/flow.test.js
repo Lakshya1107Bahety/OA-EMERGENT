@@ -91,3 +91,50 @@ describe("results policy", () => {
     expect(rep.suggestedAction).toBe("refer-orthopaedics");
   });
 });
+
+describe("IMU input and diagnosis", () => {
+  const { parsePacket } = require("@/lib/ble");
+  const { diagnose } = require("../imuDiagnosis");
+  const { gaitZ } = require("../gaitReference");
+
+  test("firmware serial line keeps the ESP32 clock", () => {
+    const r = parsePacket("1250,0.0123,-0.0214,0.9876,0.1520,-0.0830,0.4210");
+    expect(r.device_ms).toBe(1250);
+    expect(r.acc_z).toBeCloseTo(0.9876);
+  });
+  test("status lines are not readings", () => {
+    expect(parsePacket("[BLE] Advertising restarted.")).toBeNull();
+    expect(parsePacket("[MPU6050] Configured: ±2g, ±250 deg/s, 50 Hz, 400 kHz I2C.")).toBeNull();
+  });
+  const base = { connected: true, source: "ble", sinceConnectMs: 5000, sample: "" };
+  test("diagnosis names the actual problem", () => {
+    expect(diagnose({ ...base, stats: { received: 0, decoded: 0, unrecognised: 0, truncated: 0 } }).title).toMatch(/sending nothing/);
+    expect(diagnose({ ...base, stats: { received: 9, decoded: 0, unrecognised: 9, truncated: 9 } }).title).toMatch(/cut off/);
+    expect(diagnose({ ...base, stats: { received: 9, decoded: 0, unrecognised: 9, truncated: 0 } }).title).toMatch(/format/);
+    expect(diagnose({ ...base, stats: { received: 9, decoded: 9, unrecognised: 0, truncated: 0 } })).toBeNull();
+    expect(diagnose({ ...base, sinceConnectMs: 1000, stats: { received: 0, decoded: 0, unrecognised: 0, truncated: 0 } })).toBeNull();
+  });
+  test("reference z-score", () => {
+    expect(gaitZ("cadence_steps_min", 126.57)).toBe(0);
+    expect(gaitZ("cadence_steps_min", null)).toBeNull();
+  });
+});
+
+describe("user's NUS sketch (Acc(g)/Gyro text, 2 Hz)", () => {
+  const { parsePacket, isStatusLine } = require("@/lib/ble");
+  const { diagnose } = require("../imuDiagnosis");
+  test("full line parses; 20-byte cut does not", () => {
+    const r = parsePacket("Acc(g): X=0.01 Y=-0.02 Z=1.00 | Gyro(°/s): X=1.20 Y=0.30 Z=-0.40");
+    expect([r.acc_x, r.acc_z, r.gyro_x, r.gyro_z]).toEqual([0.01, 1, 1.2, -0.4]);
+    expect(parsePacket("Acc(g): X=0.01 Y=0.0")).toBeNull();
+  });
+  test("boot messages are status lines", () => {
+    expect(isStatusLine("BLE service started, waiting for connection...")).toBe(true);
+    expect(isStatusLine("Acc(g): X=0.01 Y=0.0")).toBe(false);
+  });
+  test("2 Hz is flagged as too slow", () => {
+    const d = diagnose({ connected: true, source: "usb", sinceConnectMs: 6000, rateHz: 2,
+      stats: { received: 12, decoded: 12, unrecognised: 0, truncated: 0 } });
+    expect(d.title).toMatch(/Only 2 reading/);
+  });
+});
