@@ -12,7 +12,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { toast } from "sonner";
 import {
   Wifi, WifiOff, Play, Square, Zap, Loader2, Activity, RadioTower, Bluetooth,
-  Database, Upload, CheckCircle2, TrendingUp, Timer, RotateCcw, AlertCircle, Lock,
+  Database, Upload, CheckCircle2, TrendingUp, Timer, RotateCcw, AlertCircle, Lock, Terminal,
 } from "lucide-react";
 
 const AXES = [
@@ -37,6 +37,7 @@ export default function Screening() {
   const [connected, setConnected] = useState(false);
   const [source, setSource] = useState(null); // 'ble' | 'sim'
   const [bleName, setBleName] = useState("");
+  const [rawView, setRawView] = useState({ lines: [], ok: 0, bad: 0 });
 
   // 10-Second Test Protocol: "idle" | "running" | "completed"
   const [testState, setTestState] = useState("idle");
@@ -63,6 +64,7 @@ export default function Screening() {
   const testReadingsRef = useRef([]);
   const isTestingRef = useRef(false);
   const fileRef = useRef(null);
+  const rawRef = useRef({ lines: [], ok: 0, bad: 0, lastFlush: 0 });
 
   useEffect(() => {
     api
@@ -93,16 +95,35 @@ export default function Screening() {
     }
   };
 
+  // Last packets exactly as received from the ESP32 (throttled UI refresh).
+  const handleRaw = (packet, ok) => {
+    const s = rawRef.current;
+    s.lines.push(packet);
+    if (s.lines.length > 8) s.lines.shift();
+    if (ok) s.ok += 1; else s.bad += 1;
+    const now = performance.now();
+    if (now - s.lastFlush > 250) {
+      s.lastFlush = now;
+      setRawView({ lines: [...s.lines], ok: s.ok, bad: s.bad });
+    }
+  };
+
   const connectBluetooth = async () => {
     if (!bleSupported()) {
       toast.error("Web Bluetooth not supported. Use Chrome or Edge on desktop or Android.");
       return;
     }
+    rawRef.current = { lines: [], ok: 0, bad: 0, lastFlush: 0 };
+    setRawView({ lines: [], ok: 0, bad: 0 });
     try {
       const conn = await connectBLE({
+        onRaw: handleRaw,
         onReading: (r) => {
+          // live preview while idle; only a running test records readings
           if (isTestingRef.current) {
             handleTestReading(r);
+          } else {
+            setLatest(r);
           }
         },
         onDisconnect: () => {
@@ -242,6 +263,16 @@ export default function Screening() {
     const readings = testReadingsRef.current;
     const n = readings.length;
 
+    // Never lock in averages that were not computed from real packets.
+    if (n === 0) {
+      setTestState("idle");
+      setTimeLeft(10.0);
+      setProgress(0);
+      setTenSecAverages(null);
+      toast.error("No IMU packets received in 10 seconds. Check the raw data panel in the Bluetooth tab.");
+      return;
+    }
+
     let avgs = { acc_x: 0, acc_y: 0, acc_z: 0, gyro_x: 0, gyro_y: 0, gyro_z: 0 };
     if (n > 0) {
       avgs = {
@@ -369,14 +400,14 @@ export default function Screening() {
   };
 
   // Helper for metrics display:
-  // Disconnected / Idle: 0.00
-  // Running: live packet value
+  // Disconnected: 0.00
+  // Connected idle / Running: live packet value
   // Completed: frozen 10-second calculated average
   const getMetricValue = (key) => {
     if (testState === "completed" && tenSecAverages) {
       return tenSecAverages[key] != null ? Number(tenSecAverages[key]).toFixed(2) : "0.00";
     }
-    if (testState === "running" && latest) {
+    if ((testState === "running" || connected) && latest) {
       return latest[key] != null ? Number(latest[key]).toFixed(2) : "0.00";
     }
     return "0.00";
@@ -491,7 +522,7 @@ export default function Screening() {
           <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5 flex flex-wrap items-center gap-4">
             <Bluetooth className="w-6 h-6 text-primary flex-shrink-0" />
             <p className="text-sm text-slate-600 flex-1 min-w-[220px]">
-              Scan and pair with the <strong>ESP32 + MPU6050</strong> wearable IMU over Web Bluetooth (Nordic UART Service). Disconnected by default; auto-simulator fallback is strictly disabled.
+              Scan and pair with the <strong>ESP32 + MPU6050</strong> wearable IMU over Web Bluetooth (OA_IMU service or Nordic UART). Disconnected by default; auto-simulator fallback is strictly disabled.
             </p>
             {!connected || source !== "ble" ? (
               <Button className="rounded-xl h-11 px-5" onClick={connectBluetooth} data-testid="ble-connect-button">
@@ -507,6 +538,27 @@ export default function Screening() {
             <p className="text-xs text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200 mt-2">
               Web Bluetooth requires Google Chrome, Microsoft Edge, or Android Chrome over HTTPS or localhost.
             </p>
+          )}
+          {source === "ble" && (
+            <div className="bg-slate-900 rounded-2xl p-4 mt-4" data-testid="ble-raw-panel">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Terminal className="w-4 h-4" /> Raw packets from ESP32
+                </p>
+                <p className="text-[11px] font-mono text-slate-400">
+                  {rawView.ok} parsed · {rawView.bad} unparsed
+                </p>
+              </div>
+              <pre className="text-xs font-mono text-emerald-400 whitespace-pre-wrap min-h-[3rem]">
+                {rawView.lines.length ? rawView.lines.join("\n") : "Waiting for data…"}
+              </pre>
+              {rawView.bad > 0 && rawView.ok === 0 && (
+                <p className="text-xs text-amber-400 mt-2">
+                  Packets are arriving but none contain all 6 IMU values. Expected format: <code>millis,ax,ay,az,gx,gy,gz</code>.
+                  If packets look cut off at 20 characters, the BLE MTU was not raised.
+                </p>
+              )}
+            </div>
           )}
         </TabsContent>
 
