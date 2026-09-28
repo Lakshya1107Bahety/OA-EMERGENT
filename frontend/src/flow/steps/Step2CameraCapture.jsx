@@ -127,7 +127,7 @@ export default function Step2CameraCapture({ nav }) {
         <label htmlFor="trialsRequired" className="text-sm font-medium text-slate-800">Trials required</label>
         <select id="trialsRequired" value={required} onChange={(e) => save(trials, Number(e.target.value))}
           className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-          {[3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+          {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
         {USE_MOCK && (
           <Button type="button" variant="outline" className="rounded-xl" onClick={() => addTrial({ ...demoFeatures(), frames_captured: 60, duration_sec: 6 }, true)}

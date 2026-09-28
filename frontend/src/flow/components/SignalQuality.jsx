@@ -6,7 +6,7 @@ import { Signal, Timer, Link2, AlertTriangle } from "lucide-react";
  * for a connected device, so packet rate and dropped samples stand in for it.
  */
 export default function SignalQuality({ connected, rateHz, droppedPct, stalled, pairing }) {
-  const rateOk = rateHz >= 40;
+  const rateOk = rateHz >= 1; // slow sensors (2 readings/s) are accepted for now
   const dropOk = droppedPct == null || droppedPct < 5;
   const Item = ({ icon: Icon, label, value, ok }) => (
     <div className={`rounded-xl border p-3 ${ok ? "border-emerald-200 bg-emerald-50" : "border-amber-300 bg-amber-50"}`}>
