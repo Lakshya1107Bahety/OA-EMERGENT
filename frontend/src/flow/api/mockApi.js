@@ -2,22 +2,7 @@
 // or hardware (REACT_APP_MOCK_API=true). Every result is marked DEMO. The gait
 // score here is a simple z-score stand-in, NOT the calibrated model.
 import { cameraResults, imuTrials } from "./payloads";
-
-// Reference cohort mean / SD per gait measurement (from oa_healthy_reference.json).
-const REF = {
-  right_knee_rom_deg: [67.74, 22.44], left_knee_rom_deg: [62.34, 18.85],
-  right_hip_rom_deg: [70.6, 22.11], left_hip_rom_deg: [77.26, 26.49],
-  step_duration_sec: [0.5, 0.12], stride_duration_sec: [1.0, 0.24],
-  cadence_steps_min: [126.57, 30.19], knee_rom_asymmetry_pct: [21.05, 22.82],
-  step_time_asymmetry_pct: [21.83, 19.65], trunk_lean_deg: [4.86, 4.05],
-};
-const LABEL = {
-  right_knee_rom_deg: "Right knee range of motion", left_knee_rom_deg: "Left knee range of motion",
-  right_hip_rom_deg: "Right hip range of motion", left_hip_rom_deg: "Left hip range of motion",
-  step_duration_sec: "Step duration", stride_duration_sec: "Stride duration", cadence_steps_min: "Cadence",
-  knee_rom_asymmetry_pct: "Knee ROM asymmetry", step_time_asymmetry_pct: "Step time asymmetry",
-  trunk_lean_deg: "Trunk lean",
-};
+import { GAIT_REF as REF, GAIT_LABEL as LABEL } from "../gaitReference";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const store = { patients: 0, screenings: [] };

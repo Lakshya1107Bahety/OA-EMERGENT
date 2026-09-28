@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
-import { Bluetooth, FlaskConical, Play, Square, Unplug, Info } from "lucide-react";
+import { Bluetooth, FlaskConical, Play, Square, Unplug, Info, Usb, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { connectBLE, bleSupported } from "@/lib/ble";
+import { connectBLE, bleSupported, connectSerial, serialSupported } from "@/lib/ble";
 import { useAssessment } from "../AssessmentContext";
 import { USE_MOCK } from "../api";
 import { imuTrialMetrics } from "../imuMetrics";
@@ -11,12 +11,16 @@ import { startImuSimulator } from "../imuSimulator";
 import FlowNav from "../components/FlowNav";
 import TrialStrip from "../components/TrialStrip";
 import SignalQuality from "../components/SignalQuality";
+import SerialMonitor from "../components/SerialMonitor";
+import { diagnose } from "../imuDiagnosis";
 
 /** @typedef {import("../types").ImuTrial} ImuTrial */
 
 const CHART_POINTS = 150;   // 3 s at 50 Hz
 const MAX_TRIAL_MS = 20000; // auto-stop
 const MIN_SAMPLES = 100;    // 2 s at 50 Hz
+const MONITOR_LINES = 200;
+const EMPTY_STATS = { received: 0, decoded: 0, unrecognised: 0, truncated: 0 };
 
 export default function Step3ImuCapture({ nav }) {
   const { draft, update } = useAssessment();
@@ -39,6 +43,37 @@ export default function Step3ImuCapture({ nav }) {
   const arrivalsRef = useRef([]);
   const recRef = useRef(null); // { startedAt, t0, dev0, samples: [] }
   const stopRef = useRef(null); // latest stopTrial, for the auto-stop timer
+  const rawRef = useRef([]);
+  const rawIdRef = useRef(0);
+  const statsRef = useRef({ ...EMPTY_STATS });
+  const lastBadRef = useRef("");
+  const connectedAtRef = useRef(0);
+  const [rawLines, setRawLines] = useState([]);
+  const [stats, setStats] = useState(EMPTY_STATS);
+  const [profile, setProfile] = useState(null);
+  const [sinceConnect, setSinceConnect] = useState(0);
+
+  // Every packet as received (BLE or USB), for the serial monitor and diagnosis.
+  const onRaw = (text, ok, meta = {}) => {
+    const st = statsRef.current;
+    st.received += 1;
+    if (ok) st.decoded += 1;
+    else if (!meta.info) {
+      st.unrecognised += 1;
+      if (meta.truncated) st.truncated += 1;
+      lastBadRef.current = text.slice(0, 80);
+    }
+    rawRef.current.push({ id: ++rawIdRef.current, time: new Date().toLocaleTimeString(), text, ok, info: !!meta.info, truncated: !!meta.truncated });
+    if (rawRef.current.length > MONITOR_LINES) rawRef.current.shift();
+  };
+
+  const resetMonitor = () => {
+    rawRef.current = [];
+    statsRef.current = { ...EMPTY_STATS };
+    lastBadRef.current = "";
+    setRawLines([]);
+    setStats(EMPTY_STATS);
+  };
 
   // One handler for BLE and simulator readings (already in m/s^2 and deg/s).
   const onReading = (r) => {
@@ -65,6 +100,9 @@ export default function Step3ImuCapture({ nav }) {
       setRate(arrivalsRef.current.length);
       setStalled(connected && now - lastPacketRef.current > 1500);
       setChart(liveRef.current.map((s, i) => ({ i, ...s })));
+      setRawLines(rawRef.current.slice());
+      setStats({ ...statsRef.current });
+      if (connected) setSinceConnect(now - connectedAtRef.current);
       if (recRef.current) {
         const ms = now - recRef.current.t0;
         setElapsed(ms / 1000);
@@ -81,25 +119,45 @@ export default function Step3ImuCapture({ nav }) {
   const saveImu = (nextTrials, dev = device) =>
     update("imu", { imu: { device: dev, trials: nextTrials } }, { invalidate: true });
 
+  const onLost = () => { setConnected(false); recRef.current = null; setRecording(false); toast.warning("IMU disconnected."); };
+
+  const attach = (conn, source) => {
+    connRef.current = conn;
+    const dev = { name: conn.deviceName, source, connectedAt: new Date().toISOString() };
+    connectedAtRef.current = performance.now();
+    lastPacketRef.current = 0;
+    liveRef.current = [];
+    setSinceConnect(0);
+    setProfile(conn.profile || null);
+    setDevice(dev);
+    setConnected(true);
+    toast.success(`Connected to ${conn.deviceName}`);
+  };
+
   const connectDevice = async () => {
     if (!bleSupported()) { toast.error("Web Bluetooth needs Chrome or Edge on Windows, Mac or Android."); return; }
+    resetMonitor();
     try {
-      const conn = await connectBLE({
-        onReading,
-        onDisconnect: () => { setConnected(false); recRef.current = null; setRecording(false); toast.warning("IMU disconnected."); },
-      });
-      connRef.current = conn;
-      const dev = { name: conn.deviceName, source: "ble", connectedAt: new Date().toISOString() };
-      setDevice(dev);
-      setConnected(true);
-      toast.success(`Connected to ${conn.deviceName}`);
+      attach(await connectBLE({ onReading, onRaw, onDisconnect: onLost }), "ble");
     } catch (e) {
-      toast.error(e.message || "Bluetooth connection cancelled");
+      if (e?.name !== "NotFoundError") toast.error(e.message || "Bluetooth connection failed");
+    }
+  };
+
+  const connectUsb = async () => {
+    if (!serialSupported()) { toast.error("USB connection needs Chrome or Edge on a computer (not a phone)."); return; }
+    resetMonitor();
+    try {
+      attach(await connectSerial({ onReading, onRaw, onDisconnect: onLost }), "usb");
+    } catch (e) {
+      if (e?.name !== "NotFoundError") toast.error(e.message || "USB connection failed");
     }
   };
 
   const connectSimulator = () => {
     if (!USE_MOCK && !window.confirm("Use the simulator? This screening will be marked as SIMULATED (demo) data.")) return;
+    resetMonitor();
+    setProfile(null);
     const stop = startImuSimulator(onReading);
     connRef.current = { disconnect: stop };
     const dev = { name: "IMU simulator", source: "simulator", connectedAt: new Date().toISOString() };
@@ -120,7 +178,10 @@ export default function Step3ImuCapture({ nav }) {
   const pairedCamera = cameraUsable[nextIndex - 1];
 
   const startTrial = () => {
-    if (!connected || stalled) { toast.error("No IMU data is arriving. Check the device."); return; }
+    if (!connected || stalled) {
+      toast.error("No IMU data is arriving. See the message above the serial monitor for what to check.");
+      return;
+    }
     recRef.current = { startedAt: new Date().toISOString(), t0: performance.now(), dev0: null, samples: [] };
     setElapsed(0);
     setRecording(true);
@@ -183,6 +244,8 @@ export default function Step3ImuCapture({ nav }) {
     ? `All ${required} paired`
     : pairedCamera ? `Paired with camera trial ${pairedCamera.index}` : "No camera trial left";
 
+  const problem = diagnose({ connected, source: device?.source, stats, sinceConnectMs: sinceConnect, sample: lastBadRef.current, rateHz: rate });
+
   const stripTrials = trials.map((t) => ({
     ...t,
     isDemo: device?.source === "simulator",
@@ -211,7 +274,10 @@ export default function Step3ImuCapture({ nav }) {
           {!connected ? (
             <>
               <Button className="rounded-xl h-11" onClick={connectDevice} data-testid="imu-connect">
-                <Bluetooth className="mr-2 h-4 w-4" aria-hidden="true" /> Connect ESP32
+                <Bluetooth className="mr-2 h-4 w-4" aria-hidden="true" /> Connect ESP32 (Bluetooth)
+              </Button>
+              <Button variant="outline" className="rounded-xl h-11" onClick={connectUsb} data-testid="imu-connect-usb">
+                <Usb className="mr-2 h-4 w-4" aria-hidden="true" /> Connect via USB cable
               </Button>
               <Button variant="outline" className="rounded-xl h-11" onClick={connectSimulator} data-testid="imu-simulator">
                 <FlaskConical className="mr-2 h-4 w-4" aria-hidden="true" /> Use simulator
@@ -225,6 +291,18 @@ export default function Step3ImuCapture({ nav }) {
         </div>
 
         <SignalQuality connected={connected} rateHz={rate} droppedPct={lastDrop} stalled={stalled} pairing={pairing} />
+
+        {problem && (
+          <div role="alert" className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950" data-testid="imu-diagnosis">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+            <div>
+              <p className="font-semibold">{problem.title}</p>
+              <ul className="mt-1 list-disc pl-5 space-y-0.5 break-words">
+                {problem.tips.map((t) => <li key={t}>{t}</li>)}
+              </ul>
+            </div>
+          </div>
+        )}
 
         <div className="grid gap-4 lg:grid-cols-2" aria-label="Live IMU signals">
           {[["Accelerometer (m/s²)", ["ax", "ay", "az"], ["#10B981", "#0F766E", "#F59E0B"]],
@@ -259,6 +337,11 @@ export default function Step3ImuCapture({ nav }) {
           )}
           {recording && <p className="text-sm text-slate-600" role="status">Recording… the patient walks the same path as camera trial {pairedCamera?.index}. Auto-stops at 20 s.</p>}
         </div>
+
+        {device?.source !== "simulator" && (
+          <SerialMonitor lines={rawLines} stats={stats} profile={connected ? profile : null}
+            onClear={() => { rawRef.current = []; setRawLines([]); }} />
+        )}
       </section>
 
       <section aria-labelledby="imu-trials" className="rounded-2xl border border-emerald-900/10 bg-white p-4 shadow-sm">
