@@ -132,9 +132,15 @@ describe("user's NUS sketch (Acc(g)/Gyro text, 2 Hz)", () => {
     expect(isStatusLine("BLE service started, waiting for connection...")).toBe(true);
     expect(isStatusLine("Acc(g): X=0.01 Y=0.0")).toBe(false);
   });
-  test("2 Hz is flagged as too slow", () => {
-    const d = diagnose({ connected: true, source: "usb", sinceConnectMs: 6000, rateHz: 2,
-      stats: { received: 12, decoded: 12, unrecognised: 0, truncated: 0 } });
-    expect(d.title).toMatch(/Only 2 reading/);
+  test("2 Hz is accepted: no warning, real averages, no cadence", () => {
+    expect(diagnose({ connected: true, source: "ble", sinceConnectMs: 6000, rateHz: 2,
+      stats: { received: 12, decoded: 12, unrecognised: 0, truncated: 0 } })).toBeNull();
+    const { imuTrialStats } = require("../imuStats");
+    // 10 readings over 4.5 s, knee swinging, 1 g on Z
+    const samples = Array.from({ length: 10 }, (_, i) => ({ t: i * 500, ax: 0, ay: 0, az: 9.80665, gx: i % 2 ? 60 : -60, gy: 0, gz: 0 }));
+    const st = imuTrialStats(samples);
+    expect(st).toMatchObject({ samples: 10, durationSec: 4.5, rateHz: 2, moving: true, gravityOk: true, gaitMeasurable: false });
+    expect(st.axes.accZ.mean).toBe(1);
+    expect(st.axes.gyroX).toMatchObject({ mean: 0, min: -60, max: 60 });
   });
 });

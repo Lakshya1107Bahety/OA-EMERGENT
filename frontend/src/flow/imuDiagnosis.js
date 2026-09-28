@@ -3,9 +3,7 @@
 const NO_DATA_AFTER_MS = 3000;
 
 /** Plain-language reason when a connected device gives no usable data. */
-export const MIN_RATE_HZ = 20; // walking steps need at least ~20 readings per second
-
-export function diagnose({ connected, source, stats, sinceConnectMs, sample, rateHz = null }) {
+export function diagnose({ connected, source, stats, sinceConnectMs, sample }) {
   if (!connected || source === "simulator" || sinceConnectMs < NO_DATA_AFTER_MS) return null;
   if (stats.received === 0) {
     return source === "usb"
@@ -33,12 +31,6 @@ export function diagnose({ connected, source, stats, sinceConnectMs, sample, rat
       `Example of what arrived: ${sample || "(see the serial monitor below)"}`,
       "Expected: \"ax,ay,az,gx,gy,gz\" or \"millis,ax,ay,az,gx,gy,gz\" per line, or the 17-byte binary packet.",
       "Re-flash firmware/ESP32_MPU6050_OA_IMU.ino, or send the example above so the app can be taught this format.",
-    ] };
-  }
-  if (stats.decoded > 0 && rateHz != null && sinceConnectMs >= 5000 && rateHz < MIN_RATE_HZ) {
-    return { title: `Only ${rateHz} reading(s) per second are arriving. Walking needs at least ${MIN_RATE_HZ}.`, tips: [
-      "A step takes about half a second, so at this rate the steps can't be seen and IMU trials will be rejected.",
-      "The sketch is probably waiting between readings (e.g. delay(500) = 2 per second). Change it to delay(20) for 50 per second.",
     ] };
   }
   return null;

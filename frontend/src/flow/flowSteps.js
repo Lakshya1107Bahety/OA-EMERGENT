@@ -12,7 +12,7 @@ export const STEPS = [
 ];
 
 export const STEP_IDS = STEPS.map((s) => s.id);
-export const DEFAULT_TRIALS = 5;
+export const DEFAULT_TRIALS = 2;
 
 export const stepIndex = (id) => STEP_IDS.indexOf(id);
 export const stepPath = (draftId, id) => `/app/assess/${draftId}/${id}`;

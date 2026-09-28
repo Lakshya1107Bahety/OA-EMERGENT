@@ -7,6 +7,8 @@ import { connectBLE, bleSupported, connectSerial, serialSupported } from "@/lib/
 import { useAssessment } from "../AssessmentContext";
 import { USE_MOCK } from "../api";
 import { imuTrialMetrics } from "../imuMetrics";
+import { imuTrialStats } from "../imuStats";
+import ImuTrialAnalysis from "../components/ImuTrialAnalysis";
 import { startImuSimulator } from "../imuSimulator";
 import FlowNav from "../components/FlowNav";
 import TrialStrip from "../components/TrialStrip";
@@ -18,14 +20,15 @@ import { diagnose } from "../imuDiagnosis";
 
 const CHART_POINTS = 150;   // 3 s at 50 Hz
 const MAX_TRIAL_MS = 20000; // auto-stop
-const MIN_SAMPLES = 100;    // 2 s at 50 Hz
+const MIN_TRIAL_SEC = 3;    // shortest usable walk
+const MIN_READINGS = 5;     // works even for slow (2 readings/s) sensors
 const MONITOR_LINES = 200;
 const EMPTY_STATS = { received: 0, decoded: 0, unrecognised: 0, truncated: 0 };
 
 export default function Step3ImuCapture({ nav }) {
   const { draft, update } = useAssessment();
   const cameraUsable = draft.cameraTrials.filter((t) => t.accepted);
-  const required = cameraUsable.length;
+  const required = Math.min(cameraUsable.length, draft.trialsRequired);
   const trials = draft.imu?.trials || [];
   const usable = trials.filter((t) => t.accepted);
 
@@ -192,14 +195,19 @@ export default function Step3ImuCapture({ nav }) {
     recRef.current = null;
     setRecording(false);
     if (!rec) return;
-    const m = imuTrialMetrics(rec.samples);
+    const st = imuTrialStats(rec.samples);
+    // Cadence etc. only when the sensor is fast enough to resolve steps.
+    const m = st.gaitMeasurable
+      ? imuTrialMetrics(rec.samples)
+      : { cadenceSpm: null, strideTimeCvPct: null, stepSymmetryPct: null, sampleRateHz: st.rateHz };
     const durMs = rec.samples.length ? rec.samples.at(-1).t : 0;
     let droppedPct = null;
     if (rec.dev0 != null && rec.lastDev != null && rec.samples.length > 1) {
       const expected = Math.round((rec.lastDev - rec.dev0) / 20) + 1;
       droppedPct = Math.max(0, (1 - rec.samples.length / expected) * 100);
     }
-    const accepted = rec.samples.length >= MIN_SAMPLES && m.moving;
+    const longEnough = durMs / 1000 >= MIN_TRIAL_SEC && rec.samples.length >= MIN_READINGS;
+    const accepted = longEnough && st.moving;
     /** @type {ImuTrial & {accepted: boolean}} */
     const trial = {
       index: nextIndex,
@@ -207,19 +215,19 @@ export default function Step3ImuCapture({ nav }) {
       durationSec: +(durMs / 1000).toFixed(1),
       samples: rec.samples,
       quality: {
-        sampleRateHz: m.sampleRateHz,
+        sampleRateHz: st.rateHz,
         droppedPct: droppedPct == null ? null : +droppedPct.toFixed(1),
         unitsDetected: "m/s^2",
         pairing: pairedCamera ? "paired" : "unpaired",
       },
-      summary: { cadenceSpm: m.cadenceSpm, strideTimeCvPct: m.strideTimeCvPct, stepSymmetryPct: m.stepSymmetryPct, moving: m.moving },
+      summary: { cadenceSpm: m.cadenceSpm, strideTimeCvPct: m.strideTimeCvPct, stepSymmetryPct: m.stepSymmetryPct, moving: st.moving },
       pairedCameraIndex: pairedCamera?.index ?? null,
       accepted,
     };
     saveImu([...trials, trial]);
-    if (accepted) toast.success(`IMU trial ${trial.index} recorded${m.cadenceSpm ? ` · cadence ${m.cadenceSpm} steps/min` : ""}.`);
-    else toast.error(rec.samples.length < MIN_SAMPLES
-      ? `IMU trial not usable: only ${rec.samples.length} samples. Record at least 2 seconds of walking.`
+    if (accepted) toast.success(`IMU trial ${trial.index} recorded: ${rec.samples.length} readings${m.cadenceSpm ? ` · cadence ${m.cadenceSpm} steps/min` : ""}.`);
+    else toast.error(!longEnough
+      ? `IMU trial not usable: only ${(durMs / 1000).toFixed(1)} s / ${rec.samples.length} readings. Record at least ${MIN_TRIAL_SEC} seconds of walking.`
       : "IMU trial not usable: no walking movement detected. The patient must walk during the trial.");
   }
 
@@ -244,13 +252,13 @@ export default function Step3ImuCapture({ nav }) {
     ? `All ${required} paired`
     : pairedCamera ? `Paired with camera trial ${pairedCamera.index}` : "No camera trial left";
 
-  const problem = diagnose({ connected, source: device?.source, stats, sinceConnectMs: sinceConnect, sample: lastBadRef.current, rateHz: rate });
+  const problem = diagnose({ connected, source: device?.source, stats, sinceConnectMs: sinceConnect, sample: lastBadRef.current });
 
   const stripTrials = trials.map((t) => ({
     ...t,
     isDemo: device?.source === "simulator",
     detail: t.accepted
-      ? `${t.summary.cadenceSpm ?? "—"} spm · CV ${t.summary.strideTimeCvPct ?? "—"}% · cam #${t.pairedCameraIndex ?? "—"}`
+      ? `${t.samples?.length ?? 0} readings · ${t.durationSec}s${t.summary.cadenceSpm != null ? ` · ${t.summary.cadenceSpm} spm` : ""} · cam #${t.pairedCameraIndex ?? "—"}`
       : "Not usable",
   }));
 
@@ -343,6 +351,8 @@ export default function Step3ImuCapture({ nav }) {
             onClear={() => { rawRef.current = []; setRawLines([]); }} />
         )}
       </section>
+
+      <ImuTrialAnalysis trial={trials.at(-1)} />
 
       <section aria-labelledby="imu-trials" className="rounded-2xl border border-emerald-900/10 bg-white p-4 shadow-sm">
         <h2 id="imu-trials" className="sr-only">Recorded IMU trials</h2>
