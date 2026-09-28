@@ -7,6 +7,7 @@
 //   2. Nordic UART Service (NUS) sketches, e.g. the standalone BLE serial monitor.
 //
 // Accepted packet formats:
+//   17-byte binary [0xA5][uint32 ms][int16 ax ay az gx gy gz] (current firmware default)
 //   "ax,ay,az,gx,gy,gz"  or  "millis,ax,ay,az,gx,gy,gz"
 //   {"ax":..,"ay":..,"az":..,"gx":..,"gy":..,"gz":..}    (acc_x / gyro_x keys also work)
 //   "AX:0.1 AY:0.2 AZ:9.8 GX:1 GY:2 GZ:3"                (key:value or key=value labels)
@@ -24,6 +25,28 @@ const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // notify (device -> app)
 
 const AXIS_KEYS = ["acc_x", "acc_y", "acc_z", "gyro_x", "gyro_y", "gyro_z"];
+
+// Compact binary packet from the OA_IMU firmware (BLE_BINARY_PACKETS = 1):
+// [0xA5][uint32 ms][int16 ax ay az gx gy gz], little-endian, 17 bytes.
+const BIN_MARKER = 0xa5;
+const BIN_LENGTH = 17;
+const ACC_LSB_PER_G = 16384;
+const GYRO_LSB_PER_DPS = 131;
+const DEFAULT_MTU_PAYLOAD = 20;
+
+export function decodeBinaryPacket(bytes) {
+  if (bytes.length !== BIN_LENGTH || bytes[0] !== BIN_MARKER) return null;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const raw = [0, 1, 2, 3, 4, 5].map((i) => dv.getInt16(5 + i * 2, true));
+  return {
+    reading: {
+      acc_x: raw[0] / ACC_LSB_PER_G, acc_y: raw[1] / ACC_LSB_PER_G, acc_z: raw[2] / ACC_LSB_PER_G,
+      gyro_x: raw[3] / GYRO_LSB_PER_DPS, gyro_y: raw[4] / GYRO_LSB_PER_DPS, gyro_z: raw[5] / GYRO_LSB_PER_DPS,
+      timestamp: new Date().toISOString(),
+    },
+    deviceMs: dv.getUint32(1, true),
+  };
+}
 const G = 9.80665;
 const MAX_BUFFER = 1024;
 const UNIT_SAMPLES = 10; // readings used to lock the accelerometer unit
@@ -161,20 +184,36 @@ export async function connectBLE({ onReading, onRaw, onDisconnect }) {
   let buffer = "";
   let lineMode = false;
 
-  const deliver = (packet) => {
+  const deliver = (packet, byteLength) => {
     const r = parsePacket(packet);
-    if (onRaw) onRaw(packet, !!r);
+    // A text packet of exactly 20 bytes that doesn't parse was almost certainly
+    // cut off by the default BLE packet size (firmware without binary mode).
+    const truncated = !r && byteLength === DEFAULT_MTU_PAYLOAD;
+    if (onRaw) onRaw(packet, !!r, { truncated });
     if (r && onReading) onReading(normalize(r));
   };
 
   const handler = (e) => {
     const v = e.target.value;
-    const chunk = decoder.decode(new Uint8Array(v.buffer, v.byteOffset, v.byteLength), { stream: true });
+    const bytes = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+
+    const bin = decodeBinaryPacket(bytes);
+    if (bin) {
+      const r = bin.reading;
+      if (onRaw) {
+        const f = (x) => x.toFixed(3);
+        onRaw(`[bin] t=${bin.deviceMs} a=${f(r.acc_x)},${f(r.acc_y)},${f(r.acc_z)}g g=${f(r.gyro_x)},${f(r.gyro_y)},${f(r.gyro_z)}°/s`, true, { truncated: false });
+      }
+      if (onReading) onReading(normalize(r));
+      return;
+    }
+
+    const chunk = decoder.decode(bytes, { stream: true });
     if (/[\r\n]/.test(chunk)) lineMode = true;
 
     // One reading per notification, no newline (OA_IMU firmware)
     if (!lineMode) {
-      if (chunk.trim()) deliver(chunk.trim());
+      if (chunk.trim()) deliver(chunk.trim(), bytes.byteLength);
       return;
     }
 
@@ -182,7 +221,7 @@ export async function connectBLE({ onReading, onRaw, onDisconnect }) {
     const lines = buffer.split(/\r?\n|\r/);
     buffer = lines.pop();
     if (buffer.length > MAX_BUFFER) buffer = "";
-    lines.forEach((l) => l.trim() && deliver(l.trim()));
+    lines.forEach((l) => l.trim() && deliver(l.trim(), 0));
   };
   ch.addEventListener("characteristicvaluechanged", handler);
   const onGattDisc = () => onDisconnect && onDisconnect();

@@ -23,9 +23,16 @@
     - BLE Service UUID:    12345678-1234-1234-1234-1234567890ab
     - BLE Char UUID:       abcd1234-5678-90ab-cdef-1234567890ab (NOTIFY, READ)
 
-  Packet CSV Format:
-    timestamp,AX,AY,AZ,GX,GY,GZ
-    Example: 1250,0.0123,-0.0214,0.9876,0.1520,-0.0830,0.4210
+  BLE Packet Format (BLE_BINARY_PACKETS = 1, default): 17 bytes, little-endian
+    byte  0      : 0xA5 marker
+    bytes 1-4    : uint32 timestamp (ms since boot)
+    bytes 5-16   : int16 raw AX, AY, AZ, GX, GY, GZ
+                   (accel 16384 LSB/g, gyro 131 LSB/(deg/s))
+    Fits the default 20-byte BLE packet, so nothing is cut off on any device.
+
+  Text Format (BLE_BINARY_PACKETS = 0, and always on the USB serial monitor):
+    timestamp,AX,AY,AZ,GX,GY,GZ   e.g. 1250,0.0123,-0.0214,0.9876,0.1520,-0.0830,0.4210
+    ~60 bytes: over BLE this only works if a larger MTU is negotiated.
   ========================================================================================
 */
 
@@ -45,6 +52,10 @@
 #define GYRO_CONFIG  0x1B
 #define ACCEL_CONFIG 0x1C
 #define ACCEL_XOUT_H 0x3B
+
+// 1 = compact 17-byte binary packets over BLE (recommended), 0 = CSV text
+#define BLE_BINARY_PACKETS 1
+#define BLE_PACKET_MARKER  0xA5
 
 #define SERVICE_UUID        "12345678-1234-1234-1234-1234567890ab"
 #define CHARACTERISTIC_UUID "abcd1234-5678-90ab-cdef-1234567890ab"
@@ -107,6 +118,8 @@ void setup() {
 
   // Initialize BLE
   BLEDevice::init("OA_IMU");
+  // Allow packets larger than 20 bytes if the phone/laptop agrees (needed for text mode).
+  BLEDevice::setMTU(185);
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
 
@@ -171,7 +184,17 @@ void loop() {
                now, ax, ay, az, gx, gy, gz);
 
       if (deviceConnected) {
+#if BLE_BINARY_PACKETS
+        uint8_t bin[17];
+        uint32_t t = (uint32_t)now;
+        int16_t raw[6] = {rawAX, rawAY, rawAZ, rawGX, rawGY, rawGZ};
+        bin[0] = BLE_PACKET_MARKER;
+        memcpy(&bin[1], &t, 4);     // ESP32 is little-endian
+        memcpy(&bin[5], raw, 12);
+        pCharacteristic->setValue(bin, sizeof(bin));
+#else
         pCharacteristic->setValue((uint8_t*)packet, strlen(packet));
+#endif
         pCharacteristic->notify();
       }
 
