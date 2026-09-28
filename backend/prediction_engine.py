@@ -80,6 +80,14 @@ MIN_MEASURED_FEATURES = 6
 G = 9.80665
 DEFAULT_DT = 0.02  # 50 Hz, the firmware's sampling rate
 
+# IMU gait irregularity index -- UNCALIBRATED. There is no IMU reference cohort,
+# so these cut-offs are provisional and must be re-set once healthy IMU
+# recordings exist. Only computed when the sensor shows walking movement.
+IMU_MIN_SAMPLES = 100            # 2 s at 50 Hz
+IMU_MIN_ANGULAR_VELOCITY = 15.0  # deg/s mean; below this the leg is not moving
+IMU_TIER_MODERATE = 40.0
+IMU_TIER_HIGH = 60.0
+
 NOT_DETERMINED = "Not determined"
 
 _model = None
@@ -201,7 +209,9 @@ def analyze_imu(readings: List[Dict[str, Any]]) -> Dict[str, Any]:
     rows, unit = normalize_imu_units(readings or [])
     if not rows:
         return {"calibrated": False, "sample_count": 0, "units_detected": None,
-                "averages": None, "features": None}
+                "averages": None, "features": None, "irregularity_index": None,
+                "irregularity_tier": None, "irregularity_reason": "No IMU readings.",
+                "movement_detected": False}
 
     measured_dt = _sample_interval(rows)
     dt = measured_dt or DEFAULT_DT
@@ -214,12 +224,32 @@ def analyze_imu(readings: List[Dict[str, Any]]) -> Dict[str, Any]:
     periodicity = None
     if len(acc_mag) >= 50:
         centred = acc_mag - acc_mag.mean()
+        # unbiased autocorrelation, so long lags are not penalised for overlap
         ac = np.correlate(centred, centred, mode="full")[len(centred) - 1:]
+        ac = ac / (len(centred) - np.arange(len(ac)))
         if ac[0] > 0:
-            # strongest repetition between 0.2 s and 2 s (typical step periods)
-            lo, hi = max(1, int(0.2 / dt)), min(len(ac) - 1, int(2.0 / dt))
+            # strongest repetition between 0.3 s and 2 s (step and stride periods)
+            lo, hi = max(1, int(0.3 / dt)), min(len(ac) - len(ac) // 4, int(2.0 / dt))
             if hi > lo:
                 periodicity = float(np.clip(ac[lo:hi].max() / ac[0], 0.0, 1.0))
+
+    # Unit-free roughness: sample-to-sample change relative to the signal's
+    # spread. ~0.2 for a smooth walking rhythm, ~1.0 for pure noise.
+    acc_std = float(acc_mag.std())
+    roughness = (float(np.sqrt(np.mean(np.diff(acc_mag) ** 2))) / (math.sqrt(2) * acc_std)
+                 if acc_std > 1e-6 and len(acc_mag) > 1 else None)
+
+    moving = float(gyro_mag.mean()) >= IMU_MIN_ANGULAR_VELOCITY
+    index, tier, index_reason = None, None, None
+    if len(rows) < IMU_MIN_SAMPLES:
+        index_reason = f"Too few IMU samples ({len(rows)}); record the full 10 s test."
+    elif not moving:
+        index_reason = "No walking movement detected by the sensor; the patient must walk during the test."
+    elif periodicity is None or roughness is None:
+        index_reason = "Signal too short or flat to analyse."
+    else:
+        index = round(100.0 * (0.6 * (1.0 - periodicity) + 0.4 * min(1.0, roughness)), 1)
+        tier = "High" if index > IMU_TIER_HIGH else "Moderate" if index > IMU_TIER_MODERATE else "Low"
 
     averages = {k: round(float(v.mean()), 3) for k, v in arr.items()}
     return {
@@ -232,6 +262,10 @@ def analyze_imu(readings: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Per-axis means mostly reflect how the sensor is oriented on the leg
         # (where gravity points), so they are reported, not used as risk markers.
         "averages": averages,
+        "irregularity_index": index,
+        "irregularity_tier": tier,
+        "irregularity_reason": index_reason,
+        "movement_detected": moving,
         "features": {
             "accel_rms": round(float(np.sqrt(np.mean(acc_mag ** 2))), 4),
             "accel_variance": round(float(np.var(acc_mag)), 4),
@@ -241,6 +275,7 @@ def analyze_imu(readings: List[Dict[str, Any]]) -> Dict[str, Any]:
             "mean_angular_velocity": round(float(gyro_mag.mean()), 4),
             "jerk_rms": round(jerk, 4) if jerk is not None else None,
             "step_periodicity": round(periodicity, 4) if periodicity is not None else None,
+            "roughness": round(roughness, 4) if roughness is not None else None,
         },
     }
 
@@ -363,7 +398,16 @@ def clinical_risk_factors(patient: Dict[str, Any]) -> List[Dict[str, str]]:
     return factors
 
 
-def _recommendation(tier: str) -> str:
+def _recommendation(tier: str, score_type: Optional[str] = None) -> str:
+    if score_type == "imu_irregularity_index":
+        return {
+            "High": "The IMU shows a very irregular walking pattern. This index is not calibrated; confirm with a "
+                    "camera gait assessment and a clinical knee examination.",
+            "Moderate": "The IMU shows a somewhat irregular walking pattern. This index is not calibrated; consider "
+                        "a camera gait assessment.",
+            "Low": "The IMU shows a regular walking pattern. This index is not calibrated and does not rule out "
+                   "osteoarthritis.",
+        }[tier]
     if tier == "High":
         return ("Gait is less typical than 97.5% of reference walking trials. Recommend a clinical knee "
                 "examination by a doctor; imaging only if the examination indicates it.")
@@ -373,8 +417,8 @@ def _recommendation(tier: str) -> str:
     if tier == "Low":
         return ("Gait is within the typical range of the reference cohort. This does not rule out "
                 "osteoarthritis; review symptoms and the clinical risk factors listed.")
-    return ("No calibrated score: record at least one camera gait trial for this patient. The IMU and "
-            "clinical information below is for the clinician's review only.")
+    return ("No score: record a camera gait trial, or repeat the 10 s IMU test while the patient walks. "
+            "The information below is for the clinician's review only.")
 
 
 def _follow_up(tier: str) -> str:
@@ -406,19 +450,32 @@ def predict(
     imu = analyze_imu(readings)
     clinical = clinical_risk_factors(patient)
 
-    tier = gait["tier"] if gait.get("available") else NOT_DETERMINED
     deviation = gait.get("deviation_score")
     deviations = gait.get("feature_deviations", [])
+    imu_index = imu.get("irregularity_index")
+
+    # The calibrated camera score takes precedence. Without camera trials the
+    # uncalibrated IMU index is used, and is labelled as such.
+    if gait.get("available"):
+        tier, score_type = gait["tier"], "gait_deviation_percentile"
+        basis = ("Camera gait compared with a reference walking cohort "
+                 f"({gait['reference']['trials']} trials, {gait['reference']['participants']} participants).")
+    elif imu_index is not None:
+        tier, score_type = imu["irregularity_tier"], "imu_irregularity_index"
+        basis = ("IMU gait irregularity index from the 10 s test. UNCALIBRATED: no IMU reference cohort "
+                 "exists yet, so the Low/Moderate/High cut-offs are provisional.")
+    else:
+        tier, score_type = NOT_DETERMINED, None
+        basis = " ".join(r for r in (gait.get("reason"), imu.get("irregularity_reason")) if r)
 
     return {
         "engine_version": ENGINE_VERSION,
-        "score_type": "gait_deviation_percentile" if gait.get("available") else None,
+        "score_type": score_type,
         "deviation_score": deviation,
+        "imu_score": imu_index,
         "risk_level": tier,
-        "calibrated": bool(gait.get("available")),
-        "risk_basis": ("Camera gait compared with a reference walking cohort "
-                       f"({gait['reference']['trials']} trials, {gait['reference']['participants']} participants)."
-                       if gait.get("available") else gait.get("reason")),
+        "calibrated": score_type == "gait_deviation_percentile",
+        "risk_basis": basis,
         "gait": gait,
         "feature_deviations": deviations,
         "contributing_factors": [
@@ -438,13 +495,14 @@ def predict(
             "clinical_fields": [k for k in ("age", "gender", "bmi", "pain_score", "previous_knee_injury")
                                 if patient.get(k) not in (None, "")],
         },
-        "recommendation": _recommendation(tier),
+        "recommendation": _recommendation(tier, score_type),
         "follow_up": _follow_up(tier),
         "method": (
-            "Deviation score = share of reference walking trials (Isolation Forest scores) that look more "
-            "typical than the patient's camera gait. Low <= 90, Moderate <= 97.5, High > 97.5. "
-            "IMU statistics and clinical risk factors are reported but not included in the score because "
-            "no reference or outcome data exists to calibrate them."
+            "Camera: deviation score = share of reference walking trials (Isolation Forest scores) that look "
+            "more typical than the patient's gait; Low <= 90, Moderate <= 97.5, High > 97.5 (calibrated). "
+            "IMU (used only without camera data): irregularity index = 60% step irregularity (1 - autocorrelation "
+            f"step regularity) + 40% signal roughness; Low <= {IMU_TIER_MODERATE:g}, Moderate <= {IMU_TIER_HIGH:g}, "
+            "High above (UNCALIBRATED, provisional). Clinical risk factors are listed, not scored."
         ),
         "disclaimer": (
             "Research prototype. The reference cohort has no diagnosed OA patients, so this score measures "

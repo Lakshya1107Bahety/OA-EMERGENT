@@ -76,11 +76,12 @@ export default function PoseCamera({ onLandmarks, active = true }) {
       rafRef.current = requestAnimationFrame(loop);
     }
 
+    // Capture the always-rendered <video> now; videoRef.current may be null at cleanup.
+    const v = videoRef.current;
     init();
     return () => {
       cancelled = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      const v = videoRef.current;
       if (v?.srcObject) v.srcObject.getTracks().forEach((t) => t.stop());
       landmarkerRef.current?.close?.();
     };

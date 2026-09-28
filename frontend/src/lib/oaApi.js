@@ -1,30 +1,20 @@
-import axios from "axios";
 import { api } from "@/lib/api";
 
 export const OA_API_URL = process.env.REACT_APP_OA_API_URL || "http://127.0.0.1:5000";
 
+// Gait analysis runs in the backend, so its health is the only one that matters.
 export async function checkHealth() {
   try {
     const { data } = await api.get("/oa/health");
     return data;
   } catch (err) {
-    try {
-      const direct = await axios.get(`${OA_API_URL}/health`, { timeout: 3500 });
-      return { connected: true, status_code: direct.status, upstream: true, url: OA_API_URL };
-    } catch (e2) {
-      return { connected: false, detail: "Could not reach server" };
-    }
+    return { connected: false, detail: "Could not reach the backend" };
   }
 }
 
 export async function analyze({ patient, camera_results, patient_id }) {
-  try {
-    const { data } = await api.post("/oa/analyze", { patient, camera_results, patient_id });
-    return data;
-  } catch (err) {
-    const direct = await axios.post(`${OA_API_URL}/analyze`, { patient, camera_results, patient_id }, { timeout: 15000 });
-    return { success: true, result: direct.data };
-  }
+  const { data } = await api.post("/oa/analyze", { patient, camera_results, patient_id });
+  return data;
 }
 
 // Average consecutive rows in chunks of `size`. Numeric columns are averaged;
@@ -80,8 +70,9 @@ export const BIOMECH_NUMERIC_FIELDS = [
 ];
 
 function num(v) {
+  if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? n : null;
 }
 
 // Normalize each trial row to only the 10 Isolation Forest feature fields.
@@ -93,8 +84,8 @@ export function normalizeCameraResults(rows, participantId) {
     const out = { participant_id: String(row.participant_id ?? participantId ?? `P${i + 1}`) };
     for (const f of BIOMECH_NUMERIC_FIELDS) {
       const v = num(row[f]);
-      // Only include the field if it has a real value (avoid 0-padding missing camera fields)
-      if (v !== 0 || row[f] !== undefined) out[f] = v;
+      // Only include measured values; missing ones are left out, never 0-padded
+      if (v !== null) out[f] = v;
     }
     return out;
   });

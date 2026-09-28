@@ -17,6 +17,9 @@ const RISK_CONFIG = {
   HIGH:     { icon: ShieldX,      color: "text-red-600",     bg: "bg-red-50 border-red-200",            badge: "bg-red-100 text-red-800" },
 };
 
+// Unmeasured camera values are null: show that instead of a number.
+const fmt = (v, unit) => (v == null ? "not measured" : `${v}${unit}`);
+
 function getRiskConfig(riskLevel = "") {
   const key = riskLevel.toUpperCase().includes("HIGH") ? "HIGH"
             : riskLevel.toUpperCase().includes("MOD")  ? "MODERATE"
@@ -214,12 +217,12 @@ export default function CameraAnalysis() {
 
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 text-center">
             {[
-              { label: "Right Knee ROM", value: `${lastSummary.right_knee_rom_deg}°`, color: "text-slate-900 dark:text-white" },
-              { label: "Left Knee ROM",  value: `${lastSummary.left_knee_rom_deg}°`,  color: "text-slate-900 dark:text-white" },
-              { label: "Knee ROM Asymmetry", value: `${lastSummary.knee_rom_asymmetry_pct}%`, color: "text-amber-600" },
-              { label: "Cadence",        value: `${lastSummary.cadence_steps_min} spm`, color: "text-slate-900 dark:text-white" },
-              { label: "Trunk Lean",     value: `${lastSummary.trunk_lean_deg}°`,       color: "text-slate-900 dark:text-white" },
-              { label: "Walking Velocity", value: `${lastSummary.walking_velocity} m/s`, color: "text-slate-900 dark:text-white" },
+              { label: "Right Knee ROM", value: fmt(lastSummary.right_knee_rom_deg, "°"), color: "text-slate-900 dark:text-white" },
+              { label: "Left Knee ROM",  value: fmt(lastSummary.left_knee_rom_deg, "°"),  color: "text-slate-900 dark:text-white" },
+              { label: "Knee ROM Asymmetry", value: fmt(lastSummary.knee_rom_asymmetry_pct, "%"), color: "text-amber-600" },
+              { label: "Cadence",        value: fmt(lastSummary.cadence_steps_min, " spm"), color: "text-slate-900 dark:text-white" },
+              { label: "Trunk Lean",     value: fmt(lastSummary.trunk_lean_deg, "°"),       color: "text-slate-900 dark:text-white" },
+              { label: "Walking Velocity", value: fmt(lastSummary.walking_velocity, " m/s"), color: "text-slate-900 dark:text-white" },
             ].map(({ label, value, color }) => (
               <div key={label} className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
                 <span className="text-[11px] text-slate-500 block">{label}</span>
@@ -267,12 +270,13 @@ export default function CameraAnalysis() {
             const level = riskResult.risk_level || riskResult.screening_level || "LOW";
             const cfg = getRiskConfig(level);
             const Icon = cfg.icon;
-            const prob = riskResult.oa_probability ?? riskResult.screening_score ?? "—";
+            const prob = riskResult.deviation_score ?? "—";
+            const gait = riskResult.gait || {};
             const trials = riskResult.trials_analyzed ?? "—";
-            const meanBio = riskResult.mean_biomechanical_score ?? "—";
-            const abnormalPct = riskResult.abnormal_trial_rate_pct ?? "—";
-            const symmetry = riskResult.symmetry ?? "—";
-            const findings = riskResult.main_findings || riskResult.findings || riskResult.note || "";
+            const flagged = gait.trials_flagged_atypical ?? "—";
+            const imputed = gait.features_imputed ?? "—";
+            const symmetry = riskResult.movement_symmetry ?? "—";
+            const findings = riskResult.findings || "";
 
             return (
               <div className="space-y-4">
@@ -281,15 +285,14 @@ export default function CameraAnalysis() {
                   <div className="flex items-center gap-3">
                     <Icon className={`w-8 h-8 ${cfg.color}`} />
                     <div>
-                      <p className="text-xs text-slate-500 font-medium">OA Screening Level</p>
+                      <p className="text-xs text-slate-500 font-medium">Gait deviation level</p>
                       <p className={`text-2xl font-black font-heading ${cfg.color}`}>{level}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-slate-500">Biomechanical Risk Score</p>
+                    <p className="text-xs text-slate-500">Gait deviation (0–100)</p>
                     <p className={`text-3xl font-black font-mono ${cfg.color}`}>
                       {typeof prob === "number" ? prob.toFixed(1) : prob}
-                      <span className="text-base font-semibold ml-0.5">%</span>
                     </p>
                   </div>
                 </div>
@@ -298,9 +301,9 @@ export default function CameraAnalysis() {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
                   {[
                     { label: "Trials Analyzed", value: trials },
-                    { label: "Mean Bio Score",  value: typeof meanBio === "number" ? meanBio.toFixed(4) : meanBio },
-                    { label: "Abnormal Trial Rate", value: typeof abnormalPct === "number" ? `${abnormalPct}%` : abnormalPct },
-                    { label: "Movement Symmetry", value: typeof symmetry === "number" ? `${symmetry}%` : symmetry },
+                    { label: "Trials Flagged Atypical", value: flagged },
+                    { label: "Measurements Not Captured", value: imputed },
+                    { label: "Knee ROM Symmetry", value: typeof symmetry === "number" ? `${symmetry}%` : symmetry },
                   ].map(({ label, value }) => (
                     <div key={label} className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
                       <span className="text-[11px] text-slate-500 block">{label}</span>
@@ -312,13 +315,13 @@ export default function CameraAnalysis() {
                 {/* Findings */}
                 {findings && (
                   <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">
-                    <p className="font-semibold text-slate-800 dark:text-white mb-1">Clinical Findings</p>
+                    <p className="font-semibold text-slate-800 dark:text-white mb-1">Findings</p>
                     <p className="whitespace-pre-wrap">{typeof findings === "string" ? findings : JSON.stringify(findings, null, 2)}</p>
                   </div>
                 )}
 
                 <p className="text-[11px] text-slate-400 text-center italic">
-                  AI-assisted screening only — not a clinical OA diagnosis. Calibrated against 51-participant healthy reference dataset.
+                  Gait deviation = share of reference walking trials (3,003 trials, 49 participants) that look more typical than this gait. It measures how atypical the gait is, not the probability of OA, and is not a diagnosis.
                 </p>
               </div>
             );

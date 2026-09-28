@@ -158,7 +158,7 @@ export class PoseFeatureAccumulator {
     const elapsed = durationSec || (performance.now() - this.startTime) / 1000;
 
     const calcROM = (angles) => {
-      if (!angles || angles.length < 5) return 55.0;
+      if (!angles || angles.length < 5) return null; // not measured
       const sorted = [...angles].sort((a, b) => a - b);
       const minVal = sorted[Math.floor(sorted.length * 0.05)];
       const maxVal = sorted[Math.floor(sorted.length * 0.95)];
@@ -173,8 +173,8 @@ export class PoseFeatureAccumulator {
     // Monocular frontal perspective compensation:
     // When walking toward a webcam, depth movement is partially compressed.
     // Calibrate raw angles to sagittal clinical equivalent.
-    const calibrateKnee = (v) => (v < 48 ? +(v * 1.5).toFixed(1) : +v.toFixed(1));
-    const calibrateHip = (v) => (v < 55 ? +(v * 1.35).toFixed(1) : +v.toFixed(1));
+    const calibrateKnee = (v) => (v == null ? null : v < 48 ? +(v * 1.5).toFixed(1) : +v.toFixed(1));
+    const calibrateHip = (v) => (v == null ? null : v < 55 ? +(v * 1.35).toFixed(1) : +v.toFixed(1));
 
     const rKneeRom = calibrateKnee(rKneeRomRaw);
     const lKneeRom = calibrateKnee(lKneeRomRaw);
@@ -182,12 +182,14 @@ export class PoseFeatureAccumulator {
     const lHipRom = calibrateHip(lHipRomRaw);
 
     // Knee ROM Asymmetry %
-    const maxKneeRom = Math.max(rKneeRom, lKneeRom) || 1;
-    const kneeRomAsym = +((Math.abs(rKneeRom - lKneeRom) / maxKneeRom) * 100).toFixed(1);
+    const kneeRomAsym = rKneeRom != null && lKneeRom != null
+      ? +((Math.abs(rKneeRom - lKneeRom) / (Math.max(rKneeRom, lKneeRom) || 1)) * 100).toFixed(1)
+      : null;
 
     // Cadence & Step timing (calculated from actual step intervals, exactly like camera.py)
-    let stepDuration = 0.52;
-    let cadence = 115.0;
+    // Unmeasured unless enough steps were detected
+    let stepDuration = null;
+    let cadence = null;
     if (this.stepTimestamps.length >= 3) {
       const intervals = [];
       for (let i = 1; i < this.stepTimestamps.length; i++) {
@@ -201,14 +203,16 @@ export class PoseFeatureAccumulator {
         stepDuration = +(intervals[Math.floor(intervals.length / 2)]).toFixed(2);
         cadence = +(60.0 / stepDuration).toFixed(1);
       } else {
-        cadence = elapsed > 1 ? +((Math.max(1, this.stepTimestamps.length) / elapsed) * 60).toFixed(1) : 115.0;
-        stepDuration = +(60.0 / cadence).toFixed(2);
+        if (elapsed > 1) {
+          cadence = +((this.stepTimestamps.length / elapsed) * 60).toFixed(1);
+          stepDuration = +(60.0 / cadence).toFixed(2);
+        }
       }
     }
-    const strideDuration = +(stepDuration * 2).toFixed(2);
+    const strideDuration = stepDuration != null ? +(stepDuration * 2).toFixed(2) : null;
 
     // Step time asymmetry %
-    let stepTimeAsym = 10.0;
+    let stepTimeAsym = null;
     if (this.stepTimestamps.length >= 4) {
       const intervals = [];
       for (let i = 1; i < this.stepTimestamps.length; i++) {
@@ -227,10 +231,10 @@ export class PoseFeatureAccumulator {
     // Mean trunk lean
     const meanTrunkLean = this.trunkLeans.length
       ? +(this.trunkLeans.reduce((a, b) => a + b, 0) / this.trunkLeans.length).toFixed(2)
-      : 3.2;
+      : null;
 
     // Estimated walking velocity (m/s)
-    const velocity = this.testType === "walk_5m" && elapsed > 0 ? +(5.0 / elapsed).toFixed(2) : 1.15;
+    const velocity = this.testType === "walk_5m" && elapsed > 0 ? +(5.0 / elapsed).toFixed(2) : null;
 
     return {
       right_knee_rom_deg: rKneeRom,
@@ -244,8 +248,8 @@ export class PoseFeatureAccumulator {
       step_time_asymmetry_pct: stepTimeAsym,
       trunk_lean_deg: meanTrunkLean,
       walking_velocity: velocity,
-      stance_time: +(stepDuration * 0.62).toFixed(2),
-      swing_time: +(stepDuration * 0.38).toFixed(2),
+      stance_time: stepDuration != null ? +(stepDuration * 0.62).toFixed(2) : null,
+      swing_time: stepDuration != null ? +(stepDuration * 0.38).toFixed(2) : null,
       frames_captured: this.frames.length,
       duration_sec: +elapsed.toFixed(1),
     };

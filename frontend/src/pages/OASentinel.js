@@ -170,11 +170,10 @@ export default function OASentinel() {
 
   // flexible response mapping
   const r = result || {};
-  const probability = pick(r, ["oa_probability", "probability", "oa_prob", "risk_probability"]);
+  const probability = pick(r, ["deviation_score"]);
   const riskLevel = pick(r, ["risk_level", "risk", "risk_category", "category"]);
-  const kneeStability = pick(r, ["knee_stability", "knee_stability_score", "stability"]);
-  const balance = pick(r, ["balance_score", "balance"]);
-  const symmetry = pick(r, ["symmetry", "movement_symmetry", "symmetry_score"]);
+  const trialsAnalyzed = pick(r, ["trials_analyzed"]);
+  const symmetry = pick(r, ["movement_symmetry"]);
   const findings = pick(r, ["findings", "finding", "explanation", "notes"]);
   const recommendation = pick(r, ["recommendation", "recommendations", "advice", "follow_up"]);
   const patientIdOut = pick(r, ["patient_id", "participant_id", "id"]);
@@ -198,7 +197,7 @@ export default function OASentinel() {
       </div>
 
       {OA_API_URL && (
-        <p className="text-xs text-muted-foreground -mt-3">Endpoint: <span className="font-mono">{OA_API_URL}</span></p>
+        <p className="text-xs text-muted-foreground -mt-3">Engine: backend gait model (share of reference walking trials that look more typical; not an OA probability)</p>
       )}
 
       <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5">
@@ -282,11 +281,10 @@ export default function OASentinel() {
             {patientIdOut != null && <span className="text-sm text-slate-500">Patient ID: <b data-testid="result-patient-id">{String(patientIdOut)}</b></span>}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-            <ResultTile icon={Gauge} label="OA Probability" value={probability} suffix="%" testid="result-probability" />
-            <ResultTile icon={Stethoscope} label="Risk Level" value={riskLevel} suffix="" testid="result-risk" />
-            <ResultTile icon={Activity} label="Knee Stability" value={kneeStability} suffix="" testid="result-stability" />
-            <ResultTile icon={Gauge} label="Balance Score" value={balance} suffix="" testid="result-balance" />
-            <ResultTile icon={Scale} label="Symmetry" value={symmetry} suffix="" testid="result-symmetry" />
+            <ResultTile icon={Gauge} label="Gait Deviation (0–100)" value={probability} suffix="" testid="result-deviation" />
+            <ResultTile icon={Stethoscope} label="Deviation Level" value={riskLevel} suffix="" testid="result-risk" />
+            <ResultTile icon={Activity} label="Trials Analyzed" value={trialsAnalyzed} suffix="" testid="result-trials" />
+            <ResultTile icon={Scale} label="Knee ROM Symmetry" value={symmetry} suffix="%" testid="result-symmetry" />
           </div>
           {(findings || recommendation) && (
             <div className="grid lg:grid-cols-2 gap-4">

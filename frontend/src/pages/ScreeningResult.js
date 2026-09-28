@@ -101,7 +101,9 @@ export default function ScreeningResult() {
         <AlertTriangle className="w-5 h-5 shrink-0" />
         {score.legacy
           ? "Legacy result from the old, uncalibrated engine. The number is not a probability of osteoarthritis."
-          : r.disclaimer || "AI-assisted screening, not a medical diagnosis."}
+          : score.uncalibrated
+            ? "IMU-only result. The irregularity index is NOT calibrated against reference data (provisional cut-offs). It is not a probability of osteoarthritis and not a diagnosis."
+            : r.disclaimer || "AI-assisted screening, not a medical diagnosis."}
       </div>
 
       <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-6">
@@ -170,10 +172,18 @@ export default function ScreeningResult() {
           <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5" data-testid="imu-summary-card">
             <h3 className="font-heading font-semibold text-slate-800 mb-1">IMU (10 s test)</h3>
             <p className="text-xs text-slate-500 mb-3">
-              Not calibrated: there is no IMU reference cohort yet, so these values are not included in the score.
+              Not calibrated: there is no IMU reference cohort yet, so the irregularity index uses provisional cut-offs
+              and is only used as the score when no camera gait trials exist.
             </p>
             {r.imu?.sample_count ? (
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                <span className="text-slate-600 font-semibold">Irregularity index</span>
+                <span className="font-mono text-right font-semibold" data-testid="imu-irregularity-index">
+                  {r.imu.irregularity_index != null ? `${r.imu.irregularity_index} (${r.imu.irregularity_tier})` : "—"}
+                </span>
+                {r.imu.irregularity_reason && (
+                  <span className="col-span-2 text-xs text-amber-700">{r.imu.irregularity_reason}</span>
+                )}
                 <span className="text-slate-600">Samples</span>
                 <span className="font-mono text-right">{r.imu.sample_count} @ {r.imu.sample_rate_hz} Hz</span>
                 <span className="text-slate-600">Sensor units</span>
