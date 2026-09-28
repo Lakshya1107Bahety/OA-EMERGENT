@@ -1,14 +1,17 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { api, formatApiError } from "@/lib/api";
+import { api, formatApiError, wakeBackend } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { HeartPulse, Loader2 } from "lucide-react";
+import BackendStatusBanner from "@/components/BackendStatusBanner";
 
 export default function Login() {
+  // Start waking the free-tier backend while the user types.
+  useEffect(() => { wakeBackend(); }, []);
   const { login } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
@@ -68,6 +71,7 @@ export default function Login() {
           <h1 className="font-heading text-3xl font-bold text-slate-900">Welcome back</h1>
           <p className="mt-2 text-slate-600">Log in to continue screening patients.</p>
 
+          <div className="mt-6"><BackendStatusBanner /></div>
           <form onSubmit={submit} className="mt-8 space-y-4">
             <div>
               <Label htmlFor="email">Email</Label>

@@ -22,6 +22,8 @@ import AwarenessHub from "@/pages/AwarenessHub";
 import Settings from "@/pages/Settings";
 import DatasetCollection from "@/pages/DatasetCollection";
 import SystemArchitecture from "@/pages/SystemArchitecture";
+import NewAssessment from "@/flow/NewAssessment";
+import FlowLayout from "@/flow/FlowLayout";
 
 function App() {
   return (
@@ -42,6 +44,10 @@ function App() {
             >
               <Route index element={<Navigate to="/app/dashboard" replace />} />
               <Route path="dashboard" element={<Dashboard />} />
+              {/* Screening Flow: Details -> Camera -> IMU -> Multimodal -> Results */}
+              <Route path="assess/new" element={<NewAssessment />} />
+              <Route path="assess/:draftId" element={<FlowLayout />} />
+              <Route path="assess/:draftId/:step" element={<FlowLayout />} />
               <Route path="patients" element={<PatientRecords />} />
               <Route path="patients/new" element={<PatientRegistration />} />
               <Route path="patients/:id" element={<PatientDetail />} />

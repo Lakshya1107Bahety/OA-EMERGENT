@@ -395,6 +395,14 @@ def clinical_risk_factors(patient: Dict[str, Any]) -> List[Dict[str, str]]:
         factors.append({"factor": "Knee pain (VAS 4 or more)", "value": f"{pain:g}/10"})
     if sex in ("female", "f"):
         factors.append({"factor": "Female sex (higher knee OA prevalence)", "value": "Female"})
+    if patient.get("family_history_oa") is True:
+        factors.append({"factor": "Family history of OA", "value": "Yes"})
+    metabolic = [n for n, k in (("diabetes", "diabetes"), ("hypertension", "hypertension")) if patient.get(k) is True]
+    if metabolic:
+        factors.append({"factor": "Metabolic comorbidity (associated with knee OA)", "value": ", ".join(metabolic)})
+    dur = _to_float(patient.get("symptom_duration_months"))
+    if math.isfinite(dur) and dur >= 3:
+        factors.append({"factor": "Knee symptoms for 3 months or more", "value": f"{dur:g} months"})
     return factors
 
 
@@ -436,6 +444,7 @@ def predict(
     readings: List[Dict[str, Any]],
     patient: Dict[str, Any],
     camera_results: Optional[List[Dict[str, Any]]] = None,
+    imu_trials: Optional[List[List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     """
     Build a screening result from the patient's own data.
@@ -445,9 +454,31 @@ def predict(
                      previous_knee_injury).
     camera_results : the patient's own camera gait trials. Reference or
                      uploaded datasets must NOT be passed here.
+    imu_trials     : optional separate walking trials; the irregularity index is
+                     then computed per trial (no artefacts where trials join)
+                     and summarised by the median.
     """
     gait = score_gait(camera_results)
     imu = analyze_imu(readings)
+    if imu_trials:
+        per_trial = [analyze_imu(t) for t in imu_trials]
+        imu["trials"] = [
+            {"index": i + 1, "samples": t["sample_count"], "irregularity_index": t.get("irregularity_index"),
+             "reason": t.get("irregularity_reason")}
+            for i, t in enumerate(per_trial)
+        ]
+        scored = [t["irregularity_index"] for t in per_trial if t.get("irregularity_index") is not None]
+        if scored:
+            idx = round(float(np.median(scored)), 1)
+            imu["irregularity_index"] = idx
+            imu["irregularity_tier"] = ("High" if idx > IMU_TIER_HIGH else
+                                        "Moderate" if idx > IMU_TIER_MODERATE else "Low")
+            imu["irregularity_reason"] = None
+        else:
+            imu["irregularity_index"] = None
+            imu["irregularity_tier"] = None
+            imu["irregularity_reason"] = next((t["irregularity_reason"] for t in per_trial
+                                               if t.get("irregularity_reason")), "No usable IMU trial.")
     clinical = clinical_risk_factors(patient)
 
     deviation = gait.get("deviation_score")

@@ -7,7 +7,24 @@ import { Button } from "@/components/ui/button";
 import { Camera, CameraOff, Play, Square, Activity, Timer, RefreshCw, AlertTriangle, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
-export default function CameraPanel({ onTrialComplete, onFrameSnapshot, activeTestId = "walk_5m", onSelectTest }) {
+// Small JPEG of the current video frame, stored with each trial (no video is kept).
+function captureThumbnail(video) {
+  try {
+    if (!video || !video.videoWidth) return undefined;
+    const c = document.createElement("canvas");
+    c.width = 160;
+    c.height = Math.round((160 * video.videoHeight) / video.videoWidth);
+    c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.6);
+  } catch {
+    return undefined;
+  }
+}
+
+export default function CameraPanel({
+  onTrialComplete, onFrameSnapshot, activeTestId = "walk_5m", onSelectTest,
+  hideTestSelector = false, overlayGuide = null,
+}) {
   const videoRef = useRef(null);
   const landmarkerRef = useRef(null);
   const rafRef = useRef(null);
@@ -187,6 +204,7 @@ export default function CameraPanel({ onTrialComplete, onFrameSnapshot, activeTe
 
     if (accumulatorRef.current) {
       const summary = accumulatorRef.current.finalize(recordingSeconds);
+      summary.thumbnail = captureThumbnail(videoRef.current);
       toast.success(`Completed ${selectedTest.name}: ${summary.frames_captured} frames processed.`);
       if (onTrialComplete) {
         onTrialComplete(summary);
@@ -223,7 +241,7 @@ export default function CameraPanel({ onTrialComplete, onFrameSnapshot, activeTe
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className={`flex items-center gap-2 ${hideTestSelector ? "hidden" : ""}`}>
           {FUNCTIONAL_TESTS.map((test) => (
             <button
               key={test.id}
@@ -253,6 +271,8 @@ export default function CameraPanel({ onTrialComplete, onFrameSnapshot, activeTe
         {showSkeleton && landmarks && (
           <PoseOverlay landmarks={landmarks} width={640} height={480} showAngles={true} />
         )}
+
+        {cameraActive && overlayGuide}
 
         {/* Prototype Inference Mode Badge */}
         <div className="absolute top-3 left-3 flex items-center gap-2 px-3 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md border border-slate-700 text-white text-xs font-mono">

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { syncPending, getPending } from "@/lib/offline";
+import BackendStatusBanner from "@/components/BackendStatusBanner";
 import { toast } from "sonner";
 import {
   LayoutDashboard, Users, Activity, Stethoscope, BookOpen, Settings as SettingsIcon,
@@ -11,6 +12,7 @@ import {
 
 const NAV = [
   { to: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/app/assess/new", label: "New Assessment", icon: Activity },
   { to: "/app/assessment", label: "Patient Assessment", icon: HeartPulse },
   { to: "/app/camera", label: "Live Camera Analysis", icon: Camera },
   { to: "/app/imu", label: "IMU / Wearable Data", icon: RadioTower },
@@ -153,6 +155,7 @@ export default function AppLayout() {
         </header>
         
         <main className="flex-1 p-4 lg:p-8 jc-scrollbar">
+          <div className="mb-4 empty:mb-0"><BackendStatusBanner /></div>
           <Outlet />
         </main>
 

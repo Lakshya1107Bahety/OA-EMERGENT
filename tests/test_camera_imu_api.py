@@ -110,3 +110,48 @@ def test_listings_survive_browser_side_patient_ids(client):
     assert client.get("/api/screenings").status_code == 200
     assert client.get("/api/analytics/summary").status_code == 200
     assert client.get("/api/patients").status_code == 200
+
+
+# ---------------------------------------------------------------- screening flow
+def test_flow_intake_fields_and_update(client):
+    body = {"name": "Kamla Devi", "age": 64, "gender": "Female", "height_cm": 152, "weight_kg": 71,
+            "village": "Rampur", "block": "Sadar", "pain_score": 7, "previous_knee_injury": "fall 2020",
+            "family_history_oa": True, "diabetes": True, "hypertension": False,
+            "symptom_duration_months": 18, "affected_side": "right"}
+    p = client.post("/api/patients", json=body).json()
+    assert p["family_history_oa"] is True and p["affected_side"] == "right" and p["block"] == "Sadar"
+    upd = client.put(f"/api/patients/{p['id']}", json={**body, "pain_score": 5, "affected_side": "bilateral"})
+    assert upd.status_code == 200, upd.text
+    assert upd.json()["pain_score"] == 5 and upd.json()["affected_side"] == "bilateral"
+    assert client.put("/api/patients/not-an-id", json=body).status_code == 404
+
+
+def test_flow_analyze_does_not_save_and_uses_per_trial_imu(client, patient_id):
+    before = len(client.get("/api/screenings").json())
+    df = pd.read_csv(CAMERA_CSV)[pe.FEATURES]
+    trials = [walking_imu(250), walking_imu(250)]
+    r = client.post("/api/assessments/analyze", json={
+        "patient_id": patient_id, "camera_results": [df.median().round(3).to_dict()], "imu_trials": trials})
+    assert r.status_code == 200, r.text
+    res = r.json()["result"]
+    assert res["score_type"] == "gait_deviation_percentile"          # camera takes precedence
+    assert len(res["imu"]["trials"]) == 2                              # scored per trial
+    assert res["imu"]["irregularity_index"] is not None
+    factors = [c["factor"] for c in res["clinical_risk_factors"]]
+    assert len(client.get("/api/screenings").json()) == before         # nothing saved
+
+
+def test_flow_save_with_notes_and_high_risk_counts_patients(client):
+    p = client.post("/api/patients", json={"name": "Test High", "age": 70, "gender": "Male", "village": "Mirzapur",
+                                           "family_history_oa": True}).json()
+    df = pd.read_csv(CAMERA_CSV)[pe.FEATURES]
+    extreme = {f: float(df[f].quantile(0.001)) for f in pe.FEATURES}
+    before = client.get("/api/analytics/summary").json()["high_risk_patients"]
+    for _ in range(2):  # two High screenings for the SAME patient
+        s = client.post("/api/screenings", json={"patient_id": p["id"], "camera_results": [extreme],
+                                                 "source": "screening_flow", "clinician_notes": "Refer.",
+                                                 "recommended_action": "refer-orthopaedics"}).json()
+        assert s["result"]["risk_level"] == "High" and s["clinician_notes"] == "Refer."
+    after = client.get("/api/analytics/summary").json()
+    assert after["high_risk_patients"] == before + 1   # counted once per patient
+    assert "Family history of OA" in [c["factor"] for c in s["result"]["clinical_risk_factors"]]

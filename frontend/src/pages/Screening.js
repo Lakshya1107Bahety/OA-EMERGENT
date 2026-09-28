@@ -37,7 +37,7 @@ export default function Screening() {
   const [connected, setConnected] = useState(false);
   const [source, setSource] = useState(null); // 'ble' | 'sim'
   const [bleName, setBleName] = useState("");
-  const [rawView, setRawView] = useState({ lines: [], ok: 0, bad: 0 });
+  const [rawView, setRawView] = useState({ lines: [], ok: 0, bad: 0, truncated: 0 });
 
   // 10-Second Test Protocol: "idle" | "running" | "completed"
   const [testState, setTestState] = useState("idle");
@@ -64,7 +64,7 @@ export default function Screening() {
   const testReadingsRef = useRef([]);
   const isTestingRef = useRef(false);
   const fileRef = useRef(null);
-  const rawRef = useRef({ lines: [], ok: 0, bad: 0, lastFlush: 0 });
+  const rawRef = useRef({ lines: [], ok: 0, bad: 0, truncated: 0, lastFlush: 0 });
 
   useEffect(() => {
     api
@@ -96,15 +96,16 @@ export default function Screening() {
   };
 
   // Last packets exactly as received from the ESP32 (throttled UI refresh).
-  const handleRaw = (packet, ok) => {
+  const handleRaw = (packet, ok, info = {}) => {
     const s = rawRef.current;
     s.lines.push(packet);
     if (s.lines.length > 8) s.lines.shift();
     if (ok) s.ok += 1; else s.bad += 1;
+    if (info.truncated) s.truncated += 1;
     const now = performance.now();
     if (now - s.lastFlush > 250) {
       s.lastFlush = now;
-      setRawView({ lines: [...s.lines], ok: s.ok, bad: s.bad });
+      setRawView({ lines: [...s.lines], ok: s.ok, bad: s.bad, truncated: s.truncated });
     }
   };
 
@@ -113,8 +114,8 @@ export default function Screening() {
       toast.error("Web Bluetooth not supported. Use Chrome or Edge on desktop or Android.");
       return;
     }
-    rawRef.current = { lines: [], ok: 0, bad: 0, lastFlush: 0 };
-    setRawView({ lines: [], ok: 0, bad: 0 });
+    rawRef.current = { lines: [], ok: 0, bad: 0, truncated: 0, lastFlush: 0 };
+    setRawView({ lines: [], ok: 0, bad: 0, truncated: 0 });
     try {
       const conn = await connectBLE({
         onRaw: handleRaw,
@@ -552,10 +553,17 @@ export default function Screening() {
               <pre className="text-xs font-mono text-emerald-400 whitespace-pre-wrap min-h-[3rem]">
                 {rawView.lines.length ? rawView.lines.join("\n") : "Waiting for data…"}
               </pre>
-              {rawView.bad > 0 && rawView.ok === 0 && (
-                <p className="text-xs text-amber-400 mt-2">
-                  Packets are arriving but none contain all 6 IMU values. Expected format: <code>millis,ax,ay,az,gx,gy,gz</code>.
-                  If packets look cut off at 20 characters, the BLE MTU was not raised.
+              {rawView.truncated > 0 && rawView.ok === 0 && (
+                <p className="text-xs text-amber-400 mt-2" role="alert">
+                  Packets are being cut off at 20 bytes by the Bluetooth link, so no reading is complete.
+                  Re-flash the ESP32 with the latest <code>firmware/ESP32_MPU6050_OA_IMU.ino</code> (it sends compact
+                  17-byte binary packets that always fit).
+                </p>
+              )}
+              {rawView.bad > 0 && rawView.truncated === 0 && rawView.ok === 0 && (
+                <p className="text-xs text-amber-400 mt-2" role="alert">
+                  Packets are arriving but none contain all 6 IMU values. Expected: the 17-byte binary packet from the
+                  current firmware, or text <code>millis,ax,ay,az,gx,gy,gz</code>.
                 </p>
               )}
             </div>

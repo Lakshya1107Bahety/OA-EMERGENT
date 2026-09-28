@@ -1,5 +1,6 @@
 import { openDB } from "idb";
 import { api } from "./api";
+import { syncAssessment } from "@/flow/offlineSync";
 
 const DB_NAME = "jointcare-offline";
 const STORE = "pending";
@@ -38,6 +39,9 @@ export async function syncPending() {
         await api.post("/patients", item.payload);
       } else if (item.type === "screening") {
         await api.post("/screenings", item.payload);
+      } else if (item.type === "assessment") {
+        // Screening Flow: patient -> screening -> sign-off, from the saved draft
+        await syncAssessment(item.payload);
       }
       await clearPending(item.localId);
       synced += 1;
