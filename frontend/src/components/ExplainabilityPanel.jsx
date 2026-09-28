@@ -23,7 +23,7 @@ export default function ExplainabilityPanel({ contributions = [] }) {
               Why did the model produce this result?
             </h3>
             <p className="text-xs text-slate-500">
-              SHAP-Style Feature Contribution Analysis (Relative to 51-Subject Healthy Cohort)
+              Feature Deviation (z-scores vs 49-Participant Reference Walking Cohort)
             </p>
           </div>
         </div>

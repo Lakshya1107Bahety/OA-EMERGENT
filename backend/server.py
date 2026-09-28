@@ -162,6 +162,8 @@ class PatientInput(BaseModel):
     district: Optional[str] = None
     phone: Optional[str] = None
     medical_history: Optional[str] = None
+    pain_score: Optional[float] = Field(default=None, ge=0, le=10)  # VAS 0-10
+    previous_knee_injury: Optional[str] = None
 
 
 class SensorReading(BaseModel):
@@ -191,8 +193,9 @@ class IMUSessionInput(BaseModel):
 
 class ScreeningInput(BaseModel):
     patient_id: str
-    readings: List[SensorReading]
-    imu_averages: Optional[Dict[str, float]] = None
+    readings: List[SensorReading] = []
+    camera_results: Optional[List[Dict[str, Any]]] = None  # this patient's own gait trials
+    imu_averages: Optional[Dict[str, float]] = None  # ignored: recomputed from readings
     session_id: Optional[str] = None
     is_simulated: Optional[bool] = False
 
@@ -280,7 +283,7 @@ async def list_patients(search: Optional[str] = None, user: dict = Depends(get_c
         last = await db.screenings.find_one({"patient_id": pid}, sort=[("created_at", -1)])
         p = clean(p)
         p["latest_risk"] = last.get("result", {}).get("risk_level") if last else None
-        p["latest_probability"] = last.get("result", {}).get("oa_probability") if last else None
+        p["latest_deviation_score"] = last.get("result", {}).get("deviation_score") if last else None
         p["screening_count"] = await db.screenings.count_documents({"patient_id": pid})
         out.append(p)
     return out
@@ -608,12 +611,12 @@ async def create_screening(body: ScreeningInput, user: dict = Depends(get_curren
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     readings = [r.model_dump() for r in body.readings]
-    if not readings:
-        raise HTTPException(status_code=400, detail="No sensor readings provided")
+    if not readings and not body.camera_results:
+        raise HTTPException(status_code=400, detail="No sensor readings or camera gait trials provided")
 
-    ds = await db.datasets.find_one({}, sort=[("uploaded_at", -1)])
-    dataset_rows = ds["rows"] if ds else None
-    result = prediction_engine.predict(readings, clean(patient), dataset_rows, imu_averages=body.imu_averages)
+    # Only this patient's own data is scored. Reference/uploaded datasets are
+    # never passed in as if they were the patient's camera trials.
+    result = prediction_engine.predict(readings, clean(patient), body.camera_results)
 
     latest_movement = await db.movement_assessments.find_one(
         {"patient_id": body.patient_id}, sort=[("created_at", -1)]
@@ -631,7 +634,8 @@ async def create_screening(body: ScreeningInput, user: dict = Depends(get_curren
         "patient_id": body.patient_id,
         "readings": readings,
         "reading_count": len(readings),
-        "imu_averages": body.imu_averages,
+        "imu_averages": result.get("imu_averages"),
+        "camera_trial_count": len(body.camera_results or []),
         "session_id": body.session_id,
         "is_simulated": body.is_simulated or False,
         "result": result,
@@ -696,6 +700,17 @@ async def list_screenings(review_status: Optional[str] = None, risk: Optional[st
     return out
 
 
+def _describe_result(r: Dict[str, Any]) -> str:
+    if r.get("deviation_score") is not None:
+        return (f"gait deviation {r['deviation_score']} (share of reference walking trials that look more "
+                f"typical), {r.get('risk_level')} deviation tier.")
+    if r.get("engine_version"):
+        return "no calibrated score (no camera gait trials recorded)."
+    if r.get("oa_probability") is not None:  # screenings made before engine 2.0
+        return f"legacy uncalibrated score {r['oa_probability']} ({r.get('risk_level')})."
+    return "no score available."
+
+
 @api.post("/screenings/{screening_id}/ai-summary")
 async def ai_summary(screening_id: str, user: dict = Depends(get_current_user)):
     s = await db.screenings.find_one({"_id": ObjectId(screening_id)})
@@ -720,10 +735,11 @@ async def ai_summary(screening_id: str, user: dict = Depends(get_current_user)):
         prompt = (
             f"Patient: {p['name']}, age {p['age']}, gender {p.get('gender')}, "
             f"BMI {p.get('bmi')}, occupation {p.get('occupation')}, village {p.get('village')}.\n"
-            f"Screening result: OA probability {r['oa_probability']}%, risk level {r['risk_level']}, "
-            f"confidence {r['confidence']}%. Knee stability {r['knee_stability_score']}/100, "
-            f"movement symmetry {r['movement_symmetry']}%, balance {r['balance_score']}/100.\n"
-            f"Top contributing factors: {', '.join(f['factor'] for f in r['contributing_factors'][:3])}.\n"
+            f"Screening result: {_describe_result(r)}\n"
+            f"Most unusual gait measurements: {', '.join(f['factor'] for f in r.get('contributing_factors', [])[:3]) or 'none recorded'}.\n"
+            f"Clinical risk factors: {', '.join(c['factor'] for c in r.get('clinical_risk_factors', [])) or 'none recorded'}.\n"
+            "The score is a gait deviation percentile against a reference walking cohort, NOT a probability "
+            "of osteoarthritis; never describe it as a probability or diagnosis.\n"
             f"Provide a screening summary and next-step advice for the healthcare worker."
         )
         text = await chat.send_message(UserMessage(text=prompt))
@@ -731,8 +747,7 @@ async def ai_summary(screening_id: str, user: dict = Depends(get_current_user)):
     except Exception as e:
         logger.exception("AI summary failed")
         summary = (
-            f"{p['name']} shows a {r['risk_level'].lower()} osteoarthritis risk "
-            f"({r['oa_probability']}% probability). {r['recommendation']} {r['follow_up']} "
+            f"{p['name']}: {_describe_result(r)} {r.get('recommendation', '')} {r.get('follow_up', '')} "
             f"This is AI-assisted screening, not a medical diagnosis."
         )
     await db.screenings.update_one({"_id": ObjectId(screening_id)}, {"$set": {"ai_summary": summary}})
@@ -749,10 +764,11 @@ async def analytics_summary(user: dict = Depends(get_current_user)):
     screenings = await db.screenings.find({}).to_list(5000)
     patients = await db.patients.find({}).to_list(5000)
 
-    probs = [s["result"]["oa_probability"] for s in screenings if s.get("result")]
-    stabs = [s["result"]["knee_stability_score"] for s in screenings if s.get("result")]
-    avg_prob = round(sum(probs) / len(probs), 1) if probs else 0
-    avg_stab = round(sum(stabs) / len(stabs), 1) if stabs else 0
+    scores = [s["result"]["deviation_score"] for s in screenings
+              if isinstance(s.get("result"), dict) and isinstance(s["result"].get("deviation_score"), (int, float))]
+    avg_deviation = round(sum(scores) / len(scores), 1) if scores else None
+    legacy = sum(1 for s in screenings if isinstance(s.get("result"), dict)
+                 and "oa_probability" in s["result"] and "engine_version" not in s["result"])
 
     # age distribution
     buckets = {"<40": 0, "40-49": 0, "50-59": 0, "60-69": 0, "70+": 0}
@@ -778,9 +794,9 @@ async def analytics_summary(user: dict = Depends(get_current_user)):
     village_cases = [{"village": k, "count": v} for k, v in sorted(villages.items(), key=lambda x: -x[1])[:8]]
 
     # risk distribution
-    risk_dist: Dict[str, int] = {"Low": 0, "Moderate": 0, "High": 0, "Severe": 0}
+    risk_dist: Dict[str, int] = {"Low": 0, "Moderate": 0, "High": 0, "Not determined": 0}
     for s in screenings:
-        lvl = s.get("result", {}).get("risk_level")
+        lvl = (s.get("result") or {}).get("risk_level") if isinstance(s.get("result"), dict) else None
         if lvl in risk_dist:
             risk_dist[lvl] += 1
     risk_distribution = [{"level": k, "count": v} for k, v in risk_dist.items()]
@@ -800,8 +816,9 @@ async def analytics_summary(user: dict = Depends(get_current_user)):
         "total_patients": total_patients,
         "total_screenings": total_screenings,
         "high_risk_patients": high_risk,
-        "average_oa_probability": avg_prob,
-        "average_stability_score": avg_stab,
+        "average_deviation_score": avg_deviation,
+        "scored_screenings": len(scores),
+        "legacy_screenings": legacy,
         "age_distribution": age_distribution,
         "village_cases": village_cases,
         "risk_distribution": risk_distribution,
@@ -928,6 +945,7 @@ async def health_check():
         "service": "JointCare AI Backend",
         "database": "mongodb" if not is_fallback else "in_memory_resilient_store",
         "fallback_mode": is_fallback,
+        "gait_model": prediction_engine.model_status(),
         "timestamp": now_iso(),
     }
 
@@ -984,32 +1002,8 @@ async def startup():
                 }
             ]
             for p in demo_patients:
-                p_res = await db.patients.insert_one(p)
-                # Seed a screening for the first patient
-                if p["name"] == "Ramesh Kumar":
-                    await db.screenings.insert_one({
-                        "patient_id": str(p_res.inserted_id),
-                        "reading_count": 25,
-                        "result": {
-                            "oa_probability": 68.5,
-                            "risk_level": "Moderate",
-                            "confidence": 88.0,
-                            "knee_stability_score": 62.0,
-                            "movement_symmetry": 71.4,
-                            "balance_score": 64.0,
-                            "recommendation": "Recommend physiotherapy exercises and low-impact walking.",
-                            "follow_up": "Schedule follow-up evaluation in 4 weeks.",
-                            "contributing_factors": [
-                                {"factor": "Joint ROM limitation", "weight": 0.35},
-                                {"factor": "Acceleration asymmetry", "weight": 0.30},
-                                {"factor": "BMI elevated", "weight": 0.20}
-                            ]
-                        },
-                        "created_by": admin_id,
-                        "created_at": now_iso(),
-                        "review_status": "pending",
-                    })
-            logger.info("Seeded %d demo patients and initial screening", len(demo_patients))
+                await db.patients.insert_one(p)
+            logger.info("Seeded %d demo patients", len(demo_patients))
     except Exception as e:
         logger.warning("Demo patient seeding encountered an issue: %s", e)
 

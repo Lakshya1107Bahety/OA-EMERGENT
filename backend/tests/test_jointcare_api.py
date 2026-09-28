@@ -138,12 +138,15 @@ def test_create_screening_and_prediction():
     assert r.status_code == 200, r.text
     s = r.json()
     res = s["result"]
-    for k in ("oa_probability", "risk_level", "confidence",
-              "knee_stability_score", "movement_symmetry", "balance_score",
-              "contributing_factors"):
+    for k in ("engine_version", "deviation_score", "risk_level", "calibrated",
+              "imu", "clinical_risk_factors", "contributing_factors", "recommendation"):
         assert k in res, f"Missing {k} in result"
-    assert 0 <= res["oa_probability"] <= 100
-    assert res["risk_level"] in {"Low", "Moderate", "High", "Severe"}
+    # IMU-only screening: no camera trials, so no calibrated score is invented
+    assert res["deviation_score"] is None
+    assert res["risk_level"] == "Not determined"
+    assert res["imu"]["sample_count"] == 12
+    for k in ("oa_probability", "confidence", "knee_stability_score", "balance_score"):
+        assert k not in res, f"{k} should no longer be reported"
     state["screening_id"] = s["id"]
 
 

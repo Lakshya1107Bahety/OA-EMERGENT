@@ -101,6 +101,8 @@ data/local_db.json
 
 # Large ML model / pickle files (too big for GitHub)
 *.pkl
+# Trained gait model used by backend/prediction_engine.py (2.4 MB)
+!backend/camera_biomechanics_model.pkl
 *.h5
 *.pt
 *.pth

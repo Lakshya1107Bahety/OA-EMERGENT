@@ -50,12 +50,9 @@ export default function CameraAnalysis() {
 
     try {
       if (isNotWalking) {
-        toast.info("No walking movement detected. Matching closest clinical trial from 3003-trial dataset...");
-        const matched = await inferenceService.fetchDatasetMatch(activePatient);
-        if (matched) {
-          finalSummary = { ...finalSummary, ...matched, _source: "dataset_matched_not_walking" };
-          toast.success(`Matched Participant #${matched._matched_participant} (Age: ${matched._matched_age}, BMI: ${matched._matched_bmi}) from 3003 dataset.`);
-        }
+        // Never substitute another participant's trial for this patient's data.
+        toast.error("No walking movement detected, so this trial was not recorded. Please repeat the walk in view of the camera.");
+        return;
       } else {
         const matched = await inferenceService.fetchDatasetMatch(activePatient, summary);
         if (matched) {

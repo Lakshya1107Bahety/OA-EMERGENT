@@ -93,7 +93,7 @@ export default function LandingHome() {
             Explainable AI
           </h4>
           <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-            SHAP-style mathematical feature contributions showing directional divergence from healthy cohort.
+            Per-feature z-scores showing how far each gait measurement is from the reference cohort.
           </p>
         </div>
 
@@ -193,7 +193,7 @@ export default function LandingHome() {
               5
             </div>
             <h5 className="font-heading font-bold text-sm text-slate-900 dark:text-white">
-              Risk Profile & SHAP
+              Gait Deviation & Z-scores
             </h5>
             <p className="text-xs text-slate-500">
               Prototype risk category & directional feature contributions

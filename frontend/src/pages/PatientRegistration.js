@@ -17,6 +17,7 @@ export default function PatientRegistration() {
   const [f, setF] = useState({
     name: "", age: "", gender: "", height_cm: "", weight_kg: "",
     occupation: "", village: "", district: "", phone: "", medical_history: "",
+    pain_score: "", previous_knee_injury: "",
   });
   const [loading, setLoading] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -37,6 +38,8 @@ export default function PatientRegistration() {
       height_cm: f.height_cm ? parseFloat(f.height_cm) : null,
       weight_kg: f.weight_kg ? parseFloat(f.weight_kg) : null,
       bmi: bmi ? parseFloat(bmi) : null,
+      pain_score: f.pain_score !== "" ? parseFloat(f.pain_score) : null,
+      previous_knee_injury: f.previous_knee_injury.trim() || null,
     };
     try {
       const { data } = await api.post("/patients", payload);
@@ -120,6 +123,16 @@ export default function PatientRegistration() {
           <div>
             <Label>District</Label>
             <Input value={f.district} onChange={set("district")} data-testid="patient-district-input" className="mt-1.5 h-11 rounded-xl" />
+          </div>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-5">
+          <div>
+            <Label>Knee pain today (0–10)</Label>
+            <Input type="number" min="0" max="10" step="1" value={f.pain_score} onChange={set("pain_score")} data-testid="patient-pain-input" className="mt-1.5 h-11 rounded-xl" placeholder="0 = none, 10 = worst" />
+          </div>
+          <div>
+            <Label>Previous knee injury</Label>
+            <Input value={f.previous_knee_injury} onChange={set("previous_knee_injury")} data-testid="patient-knee-injury-input" className="mt-1.5 h-11 rounded-xl" placeholder="e.g. ligament tear 2019 (leave blank if none)" />
           </div>
         </div>
         <div>
