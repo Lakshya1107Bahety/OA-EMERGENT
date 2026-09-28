@@ -18,13 +18,8 @@ export async function checkHealth() {
 }
 
 export async function analyze({ patient, camera_results, patient_id }) {
-  try {
-    const { data } = await api.post("/oa/analyze", { patient, camera_results, patient_id });
-    return data;
-  } catch (err) {
-    const direct = await axios.post(`${OA_API_URL}/analyze`, { patient, camera_results, patient_id }, { timeout: 15000 });
-    return { success: true, result: direct.data };
-  }
+  const { data } = await api.post("/oa/analyze", { patient, camera_results, patient_id });
+  return data;
 }
 
 // Average consecutive rows in chunks of `size`. Numeric columns are averaged;
@@ -80,8 +75,9 @@ export const BIOMECH_NUMERIC_FIELDS = [
 ];
 
 function num(v) {
+  if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? n : null;
 }
 
 // Normalize each trial row to only the 10 Isolation Forest feature fields.
@@ -93,8 +89,8 @@ export function normalizeCameraResults(rows, participantId) {
     const out = { participant_id: String(row.participant_id ?? participantId ?? `P${i + 1}`) };
     for (const f of BIOMECH_NUMERIC_FIELDS) {
       const v = num(row[f]);
-      // Only include the field if it has a real value (avoid 0-padding missing camera fields)
-      if (v !== 0 || row[f] !== undefined) out[f] = v;
+      // Only include measured values; missing ones are left out, never 0-padded
+      if (v !== null) out[f] = v;
     }
     return out;
   });

@@ -19,7 +19,6 @@ import secrets
 import io
 import csv
 import json
-import httpx
 import math
 
 import prediction_engine
@@ -51,7 +50,6 @@ logger = logging.getLogger("jointcare")
 JWT_SECRET = os.environ.get("JWT_SECRET", "jointcare_secret_jwt_key_2026_super_secure")
 JWT_ALGO = "HS256"
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
-OA_API_URL = os.environ.get("OA_API_URL", "http://127.0.0.1:5000").rstrip("/")
 
 ROLES = {"healthcare_worker", "doctor", "admin"}
 
@@ -605,6 +603,14 @@ async def get_imu_session(session_id: str, user: dict = Depends(get_current_user
 
 
 # ---------------------------------------------------------------- screening / prediction
+async def _find_patient(patient_id) -> Optional[dict]:
+    """Patient by id, or None. Camera screenings may carry a browser-side id
+    that is not a database ObjectId; that must not break listings."""
+    if not patient_id or not ObjectId.is_valid(str(patient_id)):
+        return None
+    return await db.patients.find_one({"_id": ObjectId(str(patient_id))})
+
+
 @api.post("/screenings")
 async def create_screening(body: ScreeningInput, user: dict = Depends(get_current_user)):
     patient = await db.patients.find_one({"_id": ObjectId(body.patient_id)})
@@ -658,7 +664,7 @@ async def get_screening(screening_id: str, user: dict = Depends(get_current_user
     s = await db.screenings.find_one({"_id": ObjectId(screening_id)})
     if not s:
         raise HTTPException(status_code=404, detail="Screening not found")
-    p = await db.patients.find_one({"_id": ObjectId(s["patient_id"])})
+    p = await _find_patient(s.get("patient_id"))
     out = clean(s)
     out["patient"] = clean(p) if p else None
     return out
@@ -692,7 +698,7 @@ async def list_screenings(review_status: Optional[str] = None, risk: Optional[st
     screenings = await db.screenings.find(q).sort("created_at", -1).to_list(1000)
     out = []
     for s in screenings:
-        p = await db.patients.find_one({"_id": ObjectId(s["patient_id"])})
+        p = await _find_patient(s.get("patient_id"))
         item = clean(s)
         item["patient_name"] = p["name"] if p else "Unknown"
         item["patient_village"] = p.get("village") if p else None
@@ -718,7 +724,7 @@ async def ai_summary(screening_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Screening not found")
     if s.get("ai_summary"):
         return {"ai_summary": s["ai_summary"]}
-    p = await db.patients.find_one({"_id": ObjectId(s["patient_id"])})
+    p = await _find_patient(s.get("patient_id"))
     r = s["result"]
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -872,68 +878,69 @@ async def sensor_ws(websocket: WebSocket, session_id: str):
 
 
 # ---------------------------------------------------------------- OA Sentinel API proxy
-# Server-side proxy to the external Render API (bypasses its missing CORS headers).
+# Camera gait analysis (runs locally with the bundled gait model).
 class OAAnalyzeInput(BaseModel):
     patient: Dict[str, Any]
     camera_results: List[Dict[str, Any]]
     patient_id: Optional[str] = None
 
 
-def _safe_json(resp):
-    try:
-        return resp.json()
-    except Exception:
-        return {"raw": resp.text}
-
-
 @api.get("/oa/health")
 async def oa_health():
-    if not OA_API_URL:
-        return {"connected": False, "detail": "OA_API_URL not configured", "url": None}
-    try:
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.get(f"{OA_API_URL}/health")
-        return {"connected": r.status_code == 200, "status_code": r.status_code,
-                "upstream": _safe_json(r), "url": OA_API_URL}
-    except Exception as e:
-        return {"connected": False, "detail": str(e), "url": OA_API_URL}
+    """Camera gait analysis runs in this backend with the bundled model."""
+    status = prediction_engine.model_status()
+    return {"connected": status["loaded"], "engine": "local", "detail": status["error"],
+            "url": "backend (local gait model)"}
+
+
+def _gait_findings(result: Dict[str, Any]) -> str:
+    gait = result.get("gait", {})
+    lines = [f"{gait.get('trials_analyzed', 0)} camera trial(s) analysed; "
+             f"gait less typical than {result['deviation_score']}% of reference walking trials."]
+    for d in result.get("feature_deviations", [])[:3]:
+        lines.append(f"{d['feature']}: {d['patient_value']} (reference mean {d['reference_mean']}, "
+                     f"z {d['z_score']:+.2f})")
+    if gait.get("features_imputed"):
+        lines.append(f"{gait['features_imputed']} measurement(s) were not captured and were filled "
+                     "with the reference median.")
+    return "\n".join(lines)
 
 
 @api.post("/oa/analyze")
 async def oa_analyze(body: OAAnalyzeInput, user: dict = Depends(get_current_user)):
-    if not OA_API_URL:
-        raise HTTPException(status_code=503, detail="OA_API_URL is not configured on the server")
+    """Score the patient's own camera gait trials with the calibrated gait model."""
     if not body.camera_results:
         raise HTTPException(status_code=400, detail="camera_results is empty")
-    payload = {"patient": body.patient, "camera_results": body.camera_results}
-    try:
-        async with httpx.AsyncClient(timeout=60) as c:
-            r = await c.post(f"{OA_API_URL}/analyze", json=payload)
-    except httpx.TimeoutException:
-        return {"success": False, "error": "OA Sentinel API timed out. The free-tier server may be waking up — please try again in a moment."}
-    except httpx.RequestError as e:
-        return {"success": False, "error": f"Could not reach OA Sentinel API: {e}"}
-    data = _safe_json(r)
-    if r.status_code >= 400:
-        msg = data.get("error") if isinstance(data, dict) else str(data)
-        return {"success": False, "status_code": r.status_code,
-                "error": f"OA Sentinel API returned an error ({r.status_code}): {msg}"}
+    patient = dict(body.patient or {})
+    if patient.get("weight_kg") is None and patient.get("mass_kg") is not None:
+        patient["weight_kg"] = patient["mass_kg"]
+
+    result = prediction_engine.predict([], patient, body.camera_results)
+    if not result["gait"].get("available"):
+        return {"success": False, "error": result["risk_basis"]}
+
+    result.update({
+        "patient_id": body.patient_id or patient.get("patient_id") or patient.get("id"),
+        "trials_analyzed": result["gait"]["trials_analyzed"],
+        "findings": _gait_findings(result),
+    })
 
     if body.patient_id:
         try:
             await db.screenings.insert_one({
                 "patient_id": body.patient_id,
-                "source": "oa_sentinel_api",
+                "source": "camera_gait",
                 "camera_results": body.camera_results,
-                "result": data,
-                "reading_count": len(body.camera_results),
+                "result": result,
+                "reading_count": 0,
+                "camera_trial_count": len(body.camera_results),
                 "created_by": user["id"],
                 "created_at": now_iso(),
                 "review_status": "pending",
             })
         except Exception:
-            logger.exception("Failed to persist OA analyze result")
-    return {"success": True, "result": data}
+            logger.exception("Failed to persist camera gait result")
+    return {"success": True, "result": result}
 
 
 # ---------------------------------------------------------------- health & diagnostics
