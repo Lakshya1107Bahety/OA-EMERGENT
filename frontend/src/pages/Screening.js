@@ -1,17 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api, wsSensorUrl, formatApiError } from "@/lib/api";
-import { makeReading } from "@/lib/sensor";
 import { connectBLE, bleSupported } from "@/lib/ble";
 import { parseCSV, computeSensorMeans, saveDatasetMeans, loadDatasetMeans } from "@/lib/csv";
 import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { toast } from "sonner";
 import {
-  Wifi, WifiOff, Play, Square, Zap, Loader2, Activity, RadioTower, Bluetooth,
+  Wifi, WifiOff, Play, Square, Zap, Loader2, Activity, Bluetooth,
   Database, Upload, CheckCircle2, TrendingUp, Timer, RotateCcw, AlertCircle, Lock, Terminal,
 } from "lucide-react";
 
@@ -35,7 +33,7 @@ export default function Screening() {
 
   // Connection State
   const [connected, setConnected] = useState(false);
-  const [source, setSource] = useState(null); // 'ble' | 'sim'
+  const [source, setSource] = useState(null); // 'ble' when connected
   const [bleName, setBleName] = useState("");
   const [rawView, setRawView] = useState({ lines: [], ok: 0, bad: 0, truncated: 0 });
 
@@ -48,9 +46,6 @@ export default function Screening() {
   const [tenSecAverages, setTenSecAverages] = useState(null);
   const [predicting, setPredicting] = useState(false);
 
-  // Simulator config
-  const [severity, setSeverity] = useState(0.35);
-
   // Dataset
   const [dataset, setDataset] = useState(loadDatasetMeans());
   const [preview, setPreview] = useState(null);
@@ -60,7 +55,6 @@ export default function Screening() {
   const wsRef = useRef(null);
   const bleRef = useRef(null);
   const activeTestTimerRef = useRef(null);
-  const simStreamTimerRef = useRef(null);
   const testReadingsRef = useRef([]);
   const isTestingRef = useRef(false);
   const fileRef = useRef(null);
@@ -89,10 +83,6 @@ export default function Screening() {
       cancel10sTest();
     }
     setTab(newTab);
-    // Auto-simulator disabled: when switching to bluetooth tab, disconnect any active simulator
-    if (newTab === "bluetooth" && source === "sim") {
-      disconnect();
-    }
   };
 
   // Last packets exactly as received from the ESP32 (throttled UI refresh).
@@ -144,7 +134,6 @@ export default function Screening() {
       setConnected(true);
       toast.success(`Connected to ${conn.deviceName || "ESP32 MPU6050"}`);
     } catch (e) {
-      // DO NOT automatically trigger or fall back to simulator here!
       setConnected(false);
       setSource(null);
       setBleName("");
@@ -152,18 +141,10 @@ export default function Screening() {
     }
   };
 
-  const connectSim = () => {
-    openWs();
-    setSource("sim");
-    setConnected(true);
-    toast.success("Simulator Mode activated. Click 'Start 10s Screening Test' to begin.");
-  };
-
   const disconnect = () => {
     if (isTestingRef.current) {
       cancel10sTest();
     }
-    if (simStreamTimerRef.current) clearInterval(simStreamTimerRef.current);
     bleRef.current?.disconnect?.();
     bleRef.current = null;
     wsRef.current?.close();
@@ -210,11 +191,7 @@ export default function Screening() {
       return;
     }
     if (!connected) {
-      toast.error(
-        tab === "bluetooth"
-          ? "Sensor disconnected. Please pair your ESP32 Bluetooth device first."
-          : "Please connect the simulator first."
-      );
+      toast.error("Sensor disconnected. Please pair your ESP32 Bluetooth device first.");
       return;
     }
 
@@ -229,15 +206,6 @@ export default function Screening() {
 
     const startTime = Date.now();
     const DURATION_MS = 10000;
-
-    // If simulator mode, stream simulated 50Hz packets
-    if (source === "sim") {
-      simStreamTimerRef.current = setInterval(() => {
-        if (isTestingRef.current) {
-          handleTestReading(makeReading(severity));
-        }
-      }, 50);
-    }
 
     // Countdown and progress interval
     activeTestTimerRef.current = setInterval(() => {
@@ -258,7 +226,6 @@ export default function Screening() {
 
   const finish10sTest = () => {
     if (activeTestTimerRef.current) clearInterval(activeTestTimerRef.current);
-    if (simStreamTimerRef.current) clearInterval(simStreamTimerRef.current);
     isTestingRef.current = false;
 
     const readings = testReadingsRef.current;
@@ -298,7 +265,6 @@ export default function Screening() {
 
   const cancel10sTest = () => {
     if (activeTestTimerRef.current) clearInterval(activeTestTimerRef.current);
-    if (simStreamTimerRef.current) clearInterval(simStreamTimerRef.current);
     isTestingRef.current = false;
     setTestState("idle");
     setTimeLeft(10.0);
@@ -346,7 +312,7 @@ export default function Screening() {
           gyro_y_avg: tenSecAverages?.gyro_y || 0,
           gyro_z_avg: tenSecAverages?.gyro_z || 0,
           raw_stream: readings,
-          is_simulated: source === "sim",
+          is_simulated: false, // only real hardware readings reach this page
         });
       } catch (saveErr) {
         console.warn("Could not save to imu_sessions collection:", saveErr);
@@ -358,7 +324,7 @@ export default function Screening() {
         readings,
         imu_averages: tenSecAverages,
         session_id: sessionId,
-        is_simulated: source === "sim",
+        is_simulated: false, // only real hardware readings reach this page
       });
 
       toast.success("Multimodal Prediction Complete & Session Saved!");
@@ -465,24 +431,6 @@ export default function Screening() {
                 BLE Connected · {bleName || "ESP32 (MPU6050)"}
               </span>
             )
-          ) : tab === "simulator" ? (
-            !connected || source !== "sim" ? (
-              <span
-                data-testid="sensor-connection-status"
-                className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-full bg-slate-100 text-slate-600 border border-slate-200"
-              >
-                <RadioTower className="w-3.5 h-3.5 text-slate-500" />
-                Simulator Idle · Click Connect
-              </span>
-            ) : (
-              <span
-                data-testid="sensor-connection-status"
-                className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200"
-              >
-                <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-                Simulator Active (50Hz Synthetic)
-              </span>
-            )
           ) : null}
         </div>
       </div>
@@ -510,9 +458,6 @@ export default function Screening() {
           <TabsTrigger value="bluetooth" data-testid="tab-bluetooth">
             <Bluetooth className="w-4 h-4 mr-1.5" /> Bluetooth (Hardware)
           </TabsTrigger>
-          <TabsTrigger value="simulator" data-testid="tab-simulator">
-            <RadioTower className="w-4 h-4 mr-1.5" /> Simulator (Demo)
-          </TabsTrigger>
           <TabsTrigger value="dataset" data-testid="tab-dataset">
             <Database className="w-4 h-4 mr-1.5" /> Dataset Reference
           </TabsTrigger>
@@ -523,7 +468,7 @@ export default function Screening() {
           <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5 flex flex-wrap items-center gap-4">
             <Bluetooth className="w-6 h-6 text-primary flex-shrink-0" />
             <p className="text-sm text-slate-600 flex-1 min-w-[220px]">
-              Scan and pair with the <strong>ESP32 + MPU6050</strong> wearable IMU over Web Bluetooth (OA_IMU service or Nordic UART). Disconnected by default; auto-simulator fallback is strictly disabled.
+              Scan and pair with the <strong>ESP32 + MPU6050</strong> wearable IMU over Web Bluetooth (OA_IMU service or Nordic UART). Only real sensor readings are used.
             </p>
             {!connected || source !== "ble" ? (
               <Button className="rounded-xl h-11 px-5" onClick={connectBluetooth} data-testid="ble-connect-button">
@@ -566,41 +511,6 @@ export default function Screening() {
                   current firmware, or text <code>millis,ax,ay,az,gx,gy,gz</code>.
                 </p>
               )}
-            </div>
-          )}
-        </TabsContent>
-
-        {/* Simulator Content */}
-        <TabsContent value="simulator" className="mt-4 space-y-4">
-          <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5 flex flex-wrap items-center gap-4">
-            <RadioTower className="w-6 h-6 text-primary flex-shrink-0" />
-            <p className="text-sm text-slate-600 flex-1 min-w-[200px]">
-              Explicit Synthetic Simulator: generates 50Hz kinematic MPU6050 patterns with configurable joint instability for testing.
-            </p>
-            {!connected || source !== "sim" ? (
-              <Button className="rounded-xl h-11 px-5" onClick={connectSim} data-testid="connect-sensor-button">
-                <RadioTower className="w-4 h-4 mr-2" /> Connect Simulator
-              </Button>
-            ) : (
-              <Button className="rounded-xl h-11 px-5" variant="outline" onClick={disconnect}>
-                Disconnect Simulator
-              </Button>
-            )}
-          </div>
-          {connected && source === "sim" && (
-            <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-5">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium text-slate-700">Simulated movement severity</p>
-                <span className="font-mono text-sm text-primary font-bold">{Math.round(severity * 100)}%</span>
-              </div>
-              <Slider
-                value={[severity]}
-                min={0}
-                max={1}
-                step={0.01}
-                onValueChange={(v) => setSeverity(v[0])}
-                data-testid="severity-slider"
-              />
             </div>
           )}
         </TabsContent>
@@ -740,7 +650,7 @@ export default function Screening() {
                   : testState === "completed"
                   ? `Completed 10.0s Window (${testReadingsRef.current.length} packets collected) — Display Frozen`
                   : !connected
-                  ? "Controls locked: Connect hardware or simulator to enable test"
+                  ? "Controls locked: Connect the Bluetooth sensor to enable test"
                   : !selected
                   ? "Controls locked: Select patient above to enable test"
                   : "Ready to start 10-second controlled screening"}
@@ -772,14 +682,14 @@ export default function Screening() {
             <div className="text-xs text-amber-800 bg-amber-50 rounded-xl p-3.5 border border-amber-200 flex items-center gap-2.5">
               <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
               <span>
-                <strong>Hardware Disconnected:</strong> Bluetooth pairing required before test controls can be enabled. Click <strong>Scan & Connect</strong> above, or switch to the <strong>Simulator</strong> tab for synthetic evaluation.
+                <strong>Hardware Disconnected:</strong> Bluetooth pairing required before test controls can be enabled. Click <strong>Scan & Connect</strong> above.
               </span>
             </div>
           )}
         </div>
       )}
 
-      {/* Visualizations & Metrics Cards (bluetooth + simulator) */}
+      {/* Visualizations & Metrics Cards (bluetooth) */}
       {tab !== "dataset" && (
         <>
           {/* Live / Frozen 6-Axis Metric Cards */}
