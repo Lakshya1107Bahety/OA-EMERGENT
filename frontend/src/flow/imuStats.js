@@ -61,3 +61,12 @@ export function interpretImuTrial(st, summary) {
   }
   return out;
 }
+
+/** Re-times samples at an even interval between the first and last arrival. */
+export function evenlySpaced(samples) {
+  const n = samples.length;
+  if (n < 2) return samples;
+  const t0 = samples[0].t;
+  const step = (samples[n - 1].t - t0) / (n - 1);
+  return samples.map((x, i) => ({ ...x, t: +(t0 + i * step).toFixed(1) }));
+}
