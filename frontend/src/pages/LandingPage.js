@@ -7,7 +7,7 @@ import {
   Stethoscope, LineChart, Bone, Upload,
 } from "lucide-react";
 
-const HERO = "https://images.unsplash.com/photo-1609113160023-4e31f3765fd7?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200";
+const HERO = "/images/hero-knee-sensor.jpg";
 const CARE = "https://images.unsplash.com/photo-1789524449725-ebc536ee51c3?crop=entropy&cs=srgb&fm=jpg&q=85&w=900";
 const THERAPY = "https://images.pexels.com/photos/20860603/pexels-photo-20860603.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940";
 
@@ -89,7 +89,7 @@ export default function LandingPage() {
 
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.6, delay: 0.15 }} className="relative">
             <div className="rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-emerald-900/10">
-              <img src={HERO} alt="Wearable knee sensor" className="w-full object-cover aspect-[4/3]" />
+              <img src={HERO} alt="Knee-worn IMU sensor prototype with battery" className="w-full object-cover aspect-[4/3]" />
             </div>
             <motion.div
               initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}
