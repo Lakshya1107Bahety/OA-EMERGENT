@@ -48,16 +48,18 @@ export function imuTrialStats(samples) {
 /** Plain-language reading of one trial's numbers. */
 export function interpretImuTrial(st, summary) {
   const out = [];
-  if (st.gravityOk) out.push({ ok: true, text: `Average total acceleration is ${st.accMagnitude.mean} g, close to gravity (1 g): the sensor is reading correctly.` });
-  else if (st.accMagnitude.mean != null) out.push({ ok: false, text: `Average total acceleration is ${st.accMagnitude.mean} g, far from gravity (1 g). Check the sensor wiring or that the values are sent in g.` });
-  if (st.moving) out.push({ ok: true, text: `Leg movement detected: average rotation ${st.gyroMagnitude.mean} °/s (peak ${st.gyroMagnitude.max} °/s).` });
-  else out.push({ ok: false, text: `Little leg movement: average rotation ${st.gyroMagnitude.mean ?? "—"} °/s (walking is usually above 15 °/s). The patient must walk during the trial.` });
+  if (st.gravityOk) out.push({ ok: true, text: `Sensor check passed: ${st.accMagnitude.mean} g average (gravity ≈ 1 g)` });
+  else if (st.accMagnitude.mean != null) out.push({ ok: false, text: `Sensor check: ${st.accMagnitude.mean} g average, expected ≈ 1 g. Check the sensor wiring` });
+  if (st.moving) out.push({ ok: true, text: `Leg movement detected: ${st.gyroMagnitude.mean} °/s average, ${st.gyroMagnitude.max} °/s peak` });
+  else out.push({ ok: false, text: `Little leg movement (${st.gyroMagnitude.mean ?? "—"} °/s): walk during the trial` });
   if (!st.gaitMeasurable) {
-    out.push({ ok: null, text: `${st.samples} readings at ${st.rateHz} per second. Cadence is calculated from ${MIN_GAIT_RATE_HZ} readings per second upwards.` });
+    out.push({ ok: null, text: `${st.samples} readings at ${st.rateHz}/s · cadence needs ${MIN_GAIT_RATE_HZ}+/s` });
+  } else if (summary?.cadenceRejected != null) {
+    out.push({ ok: false, text: `Rhythm ${summary.cadenceRejected} steps/min is outside the walking range (60–150): not used` });
   } else if (summary?.cadenceSpm != null) {
-    out.push({ ok: true, text: `Cadence ${summary.cadenceSpm} steps/min${summary.strideTimeCvPct != null ? `, stride-time variability ${summary.strideTimeCvPct}%` : ""}.` });
+    out.push({ ok: true, text: `Cadence ${summary.cadenceSpm} steps/min${summary.strideTimeCvPct != null ? ` · stride variability ${summary.strideTimeCvPct}%` : ""}` });
   } else if (st.moving) {
-    out.push({ ok: false, text: "No regular step rhythm found, so cadence could not be calculated." });
+    out.push({ ok: false, text: "No steady walking rhythm: cadence not calculated" });
   }
   return out;
 }

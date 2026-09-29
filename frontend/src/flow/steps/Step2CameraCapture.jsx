@@ -8,6 +8,7 @@ import { USE_MOCK, flowApi, isNetworkError, errorText } from "../api";
 import FlowNav from "../components/FlowNav";
 import TrialStrip from "../components/TrialStrip";
 import CameraTrialAnalysis from "../components/CameraTrialAnalysis";
+import { checkCameraFeatures } from "../plausibility";
 
 /** @typedef {import("../types").CameraTrial} CameraTrial */
 
@@ -68,8 +69,10 @@ export default function Step2CameraCapture({ nav }) {
     update("camera", { cameraTrials: next, trialsRequired }, { invalidate: true });
 
   const addTrial = (summary, isDemo = false) => {
-    const features = {};
-    for (const k of FEATURE_KEYS) features[k] = summary[k] ?? null;
+    const measured = {};
+    for (const k of FEATURE_KEYS) measured[k] = summary[k] ?? null;
+    // Physically impossible values are measurement errors: left out, never adjusted.
+    const { clean: features, rejected } = checkCameraFeatures(measured);
     const missing = FEATURE_KEYS.filter((k) => features[k] == null).length;
     const walking = isDemo || (summary.frames_captured || 0) >= MIN_FRAMES;
     const longEnough = isDemo || (summary.duration_sec || 0) >= MIN_SECONDS;
@@ -83,16 +86,18 @@ export default function Step2CameraCapture({ nav }) {
       features,
       missingFeatures: missing,
       thumbnail: summary.thumbnail,
+      rejectedFeatures: rejected,
       accepted,
       isDemo,
     };
     save([...trials, trial]);
-    if (accepted) toast.success(`Trial ${trial.index} recorded (${10 - missing}/10 measurements).`);
+    const rejNote = rejected.length ? ` ${rejected.length} implausible value(s) left out.` : "";
+    if (accepted) toast.success(`Trial ${trial.index} recorded (${10 - missing}/10 measurements).${rejNote}`);
     else toast.error(!walking
       ? `Trial ${trial.index} not usable: no walking detected. Repeat the walk in view of the camera.`
       : !longEnough
         ? `Trial ${trial.index} not usable: only ${trial.durationSec}s recorded. Record at least ${MIN_SECONDS} seconds of walking.`
-        : `Trial ${trial.index} not usable: only ${10 - missing}/10 measurements captured. Walk fully in view and try again.`);
+        : `Trial ${trial.index} not usable: only ${10 - missing}/10 plausible measurements.${rejNote} Walk side-on, fully in view, and try again.`);
   };
 
   const remove = (t) => save(trials.filter((x) => x !== t));

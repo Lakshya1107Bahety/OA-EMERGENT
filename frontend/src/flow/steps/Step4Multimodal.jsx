@@ -1,18 +1,19 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Loader2, CloudOff, RefreshCw, Camera, Stethoscope, RadioTower, AlertTriangle, Info } from "lucide-react";
+import { Loader2, CloudOff, RefreshCw, Camera, Stethoscope, RadioTower, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAssessment } from "../AssessmentContext";
 import { flowApi, isNetworkError, errorText } from "../api";
 import { buildMultimodal } from "../buildResults";
 import FlowNav from "../components/FlowNav";
 import CalibrationBadge from "../components/CalibrationBadge";
+import CadenceCheck from "../components/CadenceCheck";
 
 const ICONS = { clinical: Stethoscope, vision: Camera, imu: RadioTower };
 const TITLES = { clinical: "Clinical intake", vision: "Camera gait (vision)", imu: "IMU wearable" };
 const ROLE = {
-  vision: "Sets the risk band (calibrated against 3,003 reference walking trials).",
-  imu: "Shown for context. Sets the band only if there is no camera score.",
-  clinical: "Listed for the clinician. Not weighted into the score.",
+  vision: "Primary score · 3,003 reference walks",
+  imu: "Supporting wearable sensor",
+  clinical: "Patient history for the clinician",
 };
 
 export default function Step4Multimodal({ nav }) {
@@ -57,14 +58,6 @@ export default function Step4Multimodal({ nav }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950" role="note">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-        <p>
-          <strong>Gait deviation is not an OA probability.</strong> It is the share of reference walking trials that look
-          more typical than this patient's gait. The reference cohort contains no diagnosed OA patients.
-        </p>
-      </div>
-
       {status === "processing" && (
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-emerald-900/10 bg-white p-10 text-center shadow-sm" role="status" data-testid="mm-processing">
           <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
@@ -101,6 +94,7 @@ export default function Step4Multimodal({ nav }) {
               <p className="mt-1 font-heading text-4xl font-bold text-slate-900" data-testid="mm-gait-deviation">
                 {current.gaitDeviation != null ? current.gaitDeviation.toFixed(1) : "—"}
               </p>
+              <p className="text-xs text-slate-500">vs 3,003 reference walking trials</p>
               <div className="mt-1"><CalibrationBadge calibrated={current.gaitCalibrated} demo={!!current.demo?.vision} /></div>
             </div>
             <div>
@@ -114,6 +108,8 @@ export default function Step4Multimodal({ nav }) {
               <p className="text-xs text-slate-500">{current.dataQuality.missingMeasurements} camera measurement(s) not captured</p>
             </div>
           </section>
+
+          <CadenceCheck check={current.cadenceCheck} />
 
           <div className="grid gap-4 lg:grid-cols-3">
             {current.modalities.map((m) => {
@@ -148,9 +144,6 @@ export default function Step4Multimodal({ nav }) {
               <ul className="mt-2 list-disc space-y-1 pl-5">{current.dataQuality.flags.map((f) => <li key={f}>{f}</li>)}</ul>
             </section>
           )}
-          <p className="text-xs text-slate-500">
-            No fusion weights or confidence percentage are shown: there is no outcome data to calibrate them, so any such number would be invented.
-          </p>
         </>
       )}
 
