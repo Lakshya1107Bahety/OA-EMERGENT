@@ -99,8 +99,7 @@ export default function CameraTrialAnalysis({ trial, preview, usableCount }) {
                 <p className="font-mono text-3xl font-bold">{score == null ? "—" : score.toFixed(1)}</p>
               </div>
               <p className="basis-full text-xs opacity-80">
-                Preliminary. Share of the 3,003 reference trials that look more typical than this gait; not an OA probability.
-                The final result uses all trials and the IMU in step 4.
+                Preliminary · final result in step 4
               </p>
             </div>
           );

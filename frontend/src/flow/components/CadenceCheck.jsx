@@ -1,30 +1,41 @@
 import React from "react";
-import { CheckCircle2, AlertTriangle, Info } from "lucide-react";
-import { AGREE_WITHIN_PCT, CADENCE_RANGE } from "../plausibility";
+import { Camera, RadioTower, CheckCircle2, AlertTriangle } from "lucide-react";
+import { AGREE_WITHIN_PCT } from "../plausibility";
 
-/** Camera vs IMU cadence: two independent measurements, compared side by side. */
+/** Camera vs IMU cadence: two independent measurements side by side. */
 export default function CadenceCheck({ check }) {
   if (!check || check.status === "none") return null;
-  const v = (x) => (x == null ? "—" : `${x}`);
-  const tone = check.status === "agree" ? "border-emerald-200 bg-emerald-50 text-emerald-950"
-    : check.status === "disagree" ? "border-amber-300 bg-amber-50 text-amber-950" : "border-slate-200 bg-slate-50 text-slate-800";
-  const Icon = check.status === "agree" ? CheckCircle2 : check.status === "disagree" ? AlertTriangle : Info;
-  const msg = check.status === "agree" ? `Sensors agree (${check.diffPct}% apart, limit ${AGREE_WITHIN_PCT}%).`
-    : check.status === "disagree" ? `Sensors disagree (${check.diffPct}% apart, limit ${AGREE_WITHIN_PCT}%): repeat both recordings.`
-    : check.camera == null ? "Camera cadence not available." : "IMU cadence not available (no steady walking rhythm in the IMU recording).";
+  const agree = check.status === "agree";
+  const disagree = check.status === "disagree";
+  const Value = ({ icon: Icon, label, v }) => (
+    <div className="flex items-center gap-2">
+      <Icon className="h-4 w-4 text-slate-500" aria-hidden="true" />
+      <span className="text-xs text-slate-500">{label}</span>
+      <span className="font-mono text-lg font-bold text-slate-900">{v ?? "—"}</span>
+    </div>
+  );
   return (
-    <section aria-labelledby="cadence-check" className={`rounded-2xl border p-4 text-sm ${tone}`} data-testid="cadence-check">
-      <h3 id="cadence-check" className="flex items-center gap-2 font-semibold">
-        <Icon className="h-4 w-4" aria-hidden="true" /> Cadence check: camera vs IMU
-      </h3>
-      <p className="mt-1 font-mono">
-        Camera {v(check.camera)} · IMU {v(check.imu)} steps/min
-      </p>
-      <p className="mt-1">{msg}</p>
-      <p className="mt-1 text-xs opacity-75">
-        Each sensor measures cadence on its own; values are compared, never copied or averaged into the score.
-        Values outside {CADENCE_RANGE[0]}–{CADENCE_RANGE[1]} steps/min are rejected as measurement errors.
-      </p>
+    <section aria-labelledby="cadence-check" data-testid="cadence-check"
+      className={`flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border bg-white p-4 shadow-sm ${
+        agree ? "border-emerald-200" : disagree ? "border-amber-300" : "border-slate-200"}`}>
+      <h3 id="cadence-check" className="text-sm font-semibold text-slate-800">Cadence <span className="font-normal text-slate-500">steps/min</span></h3>
+      <Value icon={Camera} label="Camera" v={check.camera} />
+      <Value icon={RadioTower} label="IMU" v={check.imu} />
+      {agree && (
+        <span className="ml-auto flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">
+          <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Sensors agree · {check.diffPct}% apart
+        </span>
+      )}
+      {disagree && (
+        <span className="ml-auto flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-800">
+          <AlertTriangle className="h-4 w-4" aria-hidden="true" /> Sensors disagree · {check.diffPct}% apart (limit {AGREE_WITHIN_PCT}%): repeat recordings
+        </span>
+      )}
+      {check.status === "single" && (
+        <span className="ml-auto text-sm text-slate-500">
+          {check.camera == null ? "Camera cadence not available" : "IMU: no steady walking rhythm"}
+        </span>
+      )}
     </section>
   );
 }

@@ -109,15 +109,11 @@ export default function Step5RiskResults({ nav }) {
   return (
     <div className="space-y-5">
       {/* Disclaimer */}
-      <div className="flex items-start gap-3 rounded-2xl border-2 border-amber-400 bg-amber-50 p-4 text-sm text-amber-950" role="note" data-testid="results-disclaimer">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />
-        <p>
-          <strong>Decision support, not a diagnosis.</strong> Gait deviation is a descriptive measure of how atypical the
-          walking pattern is compared with a reference cohort. It is <strong>not an OA probability</strong>. Final diagnosis
-          and treatment decisions rest with the clinician.
-          {mm?.isDemo && <strong className="block mt-1 text-violet-800">This assessment contains DEMO / simulated data.</strong>}
+      {mm?.isDemo && (
+        <p className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-800">
+          <AlertTriangle className="h-4 w-4" aria-hidden="true" /> Contains simulated data
         </p>
-      </div>
+      )}
 
       {/* Band + score */}
       <section aria-labelledby="res-band" className={`grid gap-5 rounded-2xl bg-white p-5 shadow-sm ring-2 ${band.ring} lg:grid-cols-5`} data-testid="results-band">
@@ -160,7 +156,7 @@ export default function Step5RiskResults({ nav }) {
         {/* Drivers */}
         <section aria-labelledby="res-drivers" className="rounded-2xl border border-emerald-900/10 bg-white p-5 shadow-sm lg:col-span-3">
           <h2 id="res-drivers" className="font-heading text-lg font-semibold text-slate-900">Top contributing factors</h2>
-          <p className="text-xs text-slate-500">Ranked: calibrated gait measurements first (by distance from the reference), then IMU, then clinical risk factors.</p>
+          <p className="text-xs text-slate-500">Ranked by distance from the reference, then by modality</p>
           <ol className="mt-3 space-y-2" data-testid="results-drivers">
             {report.topDrivers.length === 0 && <li className="text-sm text-slate-400">{pending ? "Available after analysis." : "No notable factors."}</li>}
             {report.topDrivers.map((d, i) => {
@@ -202,7 +198,6 @@ export default function Step5RiskResults({ nav }) {
           {!pending && (
             <p className="mt-3 text-xs text-slate-500">
               {mm.dataQuality.usableCameraTrials} camera · {mm.dataQuality.usableImuTrials} IMU trials analysed.
-              No fusion weights are shown: without outcome data they would be invented.
             </p>
           )}
           {!pending && mm.cadenceCheck && <div className="mt-3"><CadenceCheck check={mm.cadenceCheck} /></div>}

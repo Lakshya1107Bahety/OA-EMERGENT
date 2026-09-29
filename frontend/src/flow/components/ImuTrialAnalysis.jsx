@@ -121,10 +121,6 @@ export default function ImuTrialAnalysis({ trial }) {
           </li>
         ))}
       </ul>
-      <p className="text-xs text-slate-500">
-        Averages use only the real readings received in this trial. Acceleration is shown in g and rotation in °/s,
-        the same units the ESP32 prints, so the numbers can be checked against its Serial Monitor.
-      </p>
     </section>
   );
 }

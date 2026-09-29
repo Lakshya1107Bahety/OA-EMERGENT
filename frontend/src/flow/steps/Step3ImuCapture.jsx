@@ -371,7 +371,7 @@ export default function Step3ImuCapture({ nav }) {
         <h2 id="imu-trials" className="sr-only">Recorded IMU trials</h2>
         <TrialStrip trials={stripTrials} required={required} onRemove={recording ? null : remove} label="IMU trial" />
         <p className="mt-3 text-xs text-slate-500">
-          spm = steps per minute · CV = stride-time variability. Descriptive only: IMU values are not calibrated against reference data.
+          spm = steps per minute
         </p>
       </section>
 
