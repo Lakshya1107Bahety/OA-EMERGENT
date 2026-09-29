@@ -144,3 +144,24 @@ describe("user's NUS sketch (Acc(g)/Gyro text, 2 Hz)", () => {
     expect(st.axes.gyroX).toMatchObject({ mean: 0, min: -60, max: 60 });
   });
 });
+
+describe("Bluetooth delivers readings in bursts", () => {
+  const { evenlySpaced } = require("../imuStats");
+  // 20 s walk sampled every 21.8 ms (delay(20)), stride 1.1 s; 2 readings arrive per 43.6 ms burst
+  const samples = Array.from({ length: 914 }, (_, i) => {
+    const ph = (2 * Math.PI * i * 21.8) / 1100;
+    return { t: Math.floor(i / 2) * 43.6 + (i % 2) * 0.3, ax: 0.3, ay: 0.2, az: 9.81 + 2.5 * Math.sin(2 * ph),
+      gx: 160 * Math.sin(ph) + 5 * Math.sin(i), gy: 3, gz: 3 };
+  });
+  test("cadence is found from bursty arrival times", () => {
+    const m = imuTrialMetrics(samples);
+    expect(m.sampleRateHz).toBeCloseTo(45.9, 0);
+    expect(m.cadenceSpm).toBeCloseTo(110, -1);
+  });
+  test("readings are re-timed evenly for the backend", () => {
+    const even = evenlySpaced(samples);
+    const gaps = even.slice(1).map((x, i) => x.t - even[i].t);
+    expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThan(0.2);
+    expect(even.at(-1).t).toBe(samples.at(-1).t);
+  });
+});

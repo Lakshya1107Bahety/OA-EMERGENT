@@ -74,13 +74,10 @@ export function imuTrialMetrics(samples) {
   const empty = { cadenceSpm: null, strideTimeCvPct: null, stepSymmetryPct: null, moving: false, sampleRateHz: 0 };
   if (!samples || samples.length < 50) return empty;
 
-  const dts = [];
-  for (let i = 1; i < samples.length; i++) {
-    const d = samples[i].t - samples[i - 1].t;
-    if (d > 0) dts.push(d);
-  }
-  dts.sort((a, b) => a - b);
-  const dtMs = dts.length ? dts[Math.floor(dts.length / 2)] : 20;
+  // Average interval over the whole trial. (The median gap between arrivals
+  // is near 0 when Bluetooth delivers readings in bursts.)
+  const span = samples[samples.length - 1].t - samples[0].t;
+  const dtMs = span > 0 ? span / (samples.length - 1) : 20;
   const fs = 1000 / dtMs;
 
   const gyro = samples.map((s) => Math.hypot(s.gx, s.gy, s.gz));

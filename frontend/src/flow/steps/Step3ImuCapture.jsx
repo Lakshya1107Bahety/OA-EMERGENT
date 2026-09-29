@@ -7,7 +7,7 @@ import { connectBLE, bleSupported, connectSerial, serialSupported } from "@/lib/
 import { useAssessment } from "../AssessmentContext";
 import { USE_MOCK } from "../api";
 import { imuTrialMetrics } from "../imuMetrics";
-import { imuTrialStats } from "../imuStats";
+import { imuTrialStats, evenlySpaced } from "../imuStats";
 import ImuTrialAnalysis from "../components/ImuTrialAnalysis";
 import { startImuSimulator } from "../imuSimulator";
 import FlowNav from "../components/FlowNav";
@@ -195,6 +195,10 @@ export default function Step3ImuCapture({ nav }) {
     recRef.current = null;
     setRecording(false);
     if (!rec) return;
+    // Without the ESP32's own clock, readings are stamped when they reach the
+    // browser, and Bluetooth delivers them in bursts. The sensor samples at a
+    // steady rate, so spread the readings evenly over the recorded span.
+    if (rec.dev0 == null) rec.samples = evenlySpaced(rec.samples);
     const st = imuTrialStats(rec.samples);
     // Cadence etc. only when the sensor is fast enough to resolve steps.
     const m = st.gaitMeasurable
