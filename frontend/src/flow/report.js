@@ -47,6 +47,10 @@ export function buildReportPdf(draft, user) {
   doc.text(`Score: ${r.riskScore != null ? r.riskScore.toFixed(1) : "—"}`, W - M - 14, y + 34, { align: "right" });
   y += 70;
   row("Gait deviation", mm?.gaitDeviation != null ? `${mm.gaitDeviation.toFixed(1)} (${mm.gaitCalibrated ? "calibrated" : "not calibrated"})` : "not available");
+  const cc = mm?.cadenceCheck;
+  if (cc && cc.status !== "none") {
+    row("Cadence camera / IMU", `${cc.camera ?? "—"} / ${cc.imu ?? "—"} steps/min${cc.diffPct != null ? ` (${cc.status}, ${cc.diffPct}% apart)` : ""}`);
+  }
   para("Gait deviation = share of reference walking trials (3,003 trials, 49 participants) that look more typical than this patient's gait. It is a descriptive measure, NOT an OA probability or diagnosis. Final diagnosis rests with the clinician.", 9, [180, 83, 9]);
 
   if (mm?.modalities) {

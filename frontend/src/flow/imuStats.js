@@ -54,6 +54,8 @@ export function interpretImuTrial(st, summary) {
   else out.push({ ok: false, text: `Little leg movement: average rotation ${st.gyroMagnitude.mean ?? "—"} °/s (walking is usually above 15 °/s). The patient must walk during the trial.` });
   if (!st.gaitMeasurable) {
     out.push({ ok: null, text: `${st.samples} readings at ${st.rateHz} per second. Cadence is calculated from ${MIN_GAIT_RATE_HZ} readings per second upwards.` });
+  } else if (summary?.cadenceRejected != null) {
+    out.push({ ok: false, text: `Detected rhythm of ${summary.cadenceRejected} steps/min is outside the human walking range (60–150), so it is not used. Walk at a steady, normal pace.` });
   } else if (summary?.cadenceSpm != null) {
     out.push({ ok: true, text: `Cadence ${summary.cadenceSpm} steps/min${summary.strideTimeCvPct != null ? `, stride-time variability ${summary.strideTimeCvPct}%` : ""}.` });
   } else if (st.moving) {

@@ -165,3 +165,25 @@ describe("Bluetooth delivers readings in bursts", () => {
     expect(even.at(-1).t).toBe(samples.at(-1).t);
   });
 });
+
+describe("plausibility and camera-IMU cadence check", () => {
+  const { checkCameraFeatures, cadenceAgreement, isPlausible } = require("../plausibility");
+  test("implausible camera values are rejected, not clipped", () => {
+    const { clean, rejected } = checkCameraFeatures({ cadence_steps_min: 156.1, step_duration_sec: 0.39, trunk_lean_deg: 45 });
+    expect(clean).toEqual({ cadence_steps_min: null, step_duration_sec: 0.39, trunk_lean_deg: null });
+    expect(rejected.map((r) => [r.key, r.value])).toEqual([["cadence_steps_min", 156.1], ["trunk_lean_deg", 45]]);
+    expect(isPlausible("cadence_steps_min", 130)).toBe(true);
+    expect(isPlausible("cadence_steps_min", 150.1)).toBe(false);
+  });
+  test("agreement: compared, never copied", () => {
+    expect(cadenceAgreement([112, 116], [110])).toMatchObject({ camera: 114, imu: 110, status: "agree" });
+    expect(cadenceAgreement([112], [90]).status).toBe("disagree");
+    expect(cadenceAgreement([112], [null])).toMatchObject({ camera: 112, imu: null, status: "single" });
+    expect(cadenceAgreement([156], [110])).toMatchObject({ camera: null, imu: 110, status: "single" });
+  });
+  test("disagreeing sensors -> re-screen unless High", () => {
+    const base = { band: "Low", bandSource: "vision", cadenceCheck: { status: "disagree", camera: 112, imu: 90, diffPct: 21.8 } };
+    expect(suggestAction(base, { painScore: 8 }).action).toBe("re-screen");
+    expect(suggestAction({ ...base, band: "High" }, {}).action).toBe("refer-orthopaedics");
+  });
+});

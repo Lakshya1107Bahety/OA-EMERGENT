@@ -44,11 +44,13 @@ export default function CameraTrialAnalysis({ trial, preview, usableCount }) {
           <tbody>
             {Object.keys(GAIT_REF).map((k) => {
               const v = f[k];
+              const rej = (trial.rejectedFeatures || []).find((r) => r.key === k);
               const z = gaitZ(k, v);
               const [m, sd] = GAIT_REF[k];
               const unit = GAIT_UNIT[k];
-              const status = z == null ? "Not measured" : Math.abs(z) < 1 ? "Typical" : `${z > 0 ? "Above" : "Below"} typical (z ${z > 0 ? "+" : ""}${z})`;
-              const cls = z == null ? "text-slate-400" : Math.abs(z) >= 2 ? "text-red-700 font-semibold" : Math.abs(z) >= 1 ? "text-amber-700" : "text-emerald-700";
+              const status = rej ? `Implausible (${rej.value}; walking range ${rej.range[0]}–${rej.range[1]}): not used`
+                : z == null ? "Not measured" : Math.abs(z) < 1 ? "Typical" : `${z > 0 ? "Above" : "Below"} typical (z ${z > 0 ? "+" : ""}${z})`;
+              const cls = rej ? "text-red-700" : z == null ? "text-slate-400" : Math.abs(z) >= 2 ? "text-red-700 font-semibold" : Math.abs(z) >= 1 ? "text-amber-700" : "text-emerald-700";
               return (
                 <tr key={k} className="border-b border-slate-100">
                   <th scope="row" className="py-1.5 pr-3 text-left font-normal text-slate-700">{GAIT_LABEL[k]}</th>

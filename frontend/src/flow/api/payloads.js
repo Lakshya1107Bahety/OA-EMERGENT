@@ -1,4 +1,5 @@
 // Converts the flow's draft into the backend's request bodies.
+import { isPlausible } from "../plausibility";
 
 /** @param {import("../types").Patient} p */
 export function toPatientPayload(p) {
@@ -35,7 +36,7 @@ export function cameraResults(draft) {
     .filter((t) => t.accepted)
     .map((t) => {
       const out = { trial: t.index };
-      for (const k of FEATURE_KEYS) if (t.features[k] != null) out[k] = t.features[k];
+      for (const k of FEATURE_KEYS) if (t.features[k] != null && isPlausible(k, t.features[k])) out[k] = t.features[k];
       return out;
     });
 }

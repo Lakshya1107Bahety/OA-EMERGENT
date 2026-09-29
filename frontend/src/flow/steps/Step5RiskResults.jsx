@@ -15,6 +15,7 @@ import { downloadReportPdf, printReportPdf } from "../report";
 import { deleteDraft } from "../draftStore";
 import FlowNav from "../components/FlowNav";
 import CalibrationBadge from "../components/CalibrationBadge";
+import CadenceCheck from "../components/CadenceCheck";
 
 const BAND = {
   Low: { cls: "bg-emerald-600", ring: "ring-emerald-200", text: "text-emerald-700", icon: ShieldCheck, label: "Low" },
@@ -204,6 +205,7 @@ export default function Step5RiskResults({ nav }) {
               No fusion weights are shown: without outcome data they would be invented.
             </p>
           )}
+          {!pending && mm.cadenceCheck && <div className="mt-3"><CadenceCheck check={mm.cadenceCheck} /></div>}
         </section>
       </div>
 

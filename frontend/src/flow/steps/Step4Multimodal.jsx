@@ -6,6 +6,7 @@ import { flowApi, isNetworkError, errorText } from "../api";
 import { buildMultimodal } from "../buildResults";
 import FlowNav from "../components/FlowNav";
 import CalibrationBadge from "../components/CalibrationBadge";
+import CadenceCheck from "../components/CadenceCheck";
 
 const ICONS = { clinical: Stethoscope, vision: Camera, imu: RadioTower };
 const TITLES = { clinical: "Clinical intake", vision: "Camera gait (vision)", imu: "IMU wearable" };
@@ -114,6 +115,8 @@ export default function Step4Multimodal({ nav }) {
               <p className="text-xs text-slate-500">{current.dataQuality.missingMeasurements} camera measurement(s) not captured</p>
             </div>
           </section>
+
+          <CadenceCheck check={current.cadenceCheck} />
 
           <div className="grid gap-4 lg:grid-cols-3">
             {current.modalities.map((m) => {

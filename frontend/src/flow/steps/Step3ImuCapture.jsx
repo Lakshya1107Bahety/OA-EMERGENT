@@ -8,6 +8,7 @@ import { useAssessment } from "../AssessmentContext";
 import { USE_MOCK } from "../api";
 import { imuTrialMetrics } from "../imuMetrics";
 import { imuTrialStats, evenlySpaced } from "../imuStats";
+import { isPlausible } from "../plausibility";
 import ImuTrialAnalysis from "../components/ImuTrialAnalysis";
 import { startImuSimulator } from "../imuSimulator";
 import FlowNav from "../components/FlowNav";
@@ -204,6 +205,14 @@ export default function Step3ImuCapture({ nav }) {
     const m = st.gaitMeasurable
       ? imuTrialMetrics(rec.samples)
       : { cadenceSpm: null, strideTimeCvPct: null, stepSymmetryPct: null, sampleRateHz: st.rateHz };
+    // A cadence outside the human walking range is a detection error: leave it out.
+    let cadenceRejected = null;
+    if (m.cadenceSpm != null && !isPlausible("cadence_steps_min", m.cadenceSpm)) {
+      cadenceRejected = m.cadenceSpm;
+      m.cadenceSpm = null;
+      m.strideTimeCvPct = null;
+      m.stepSymmetryPct = null;
+    }
     const durMs = rec.samples.length ? rec.samples.at(-1).t : 0;
     let droppedPct = null;
     if (rec.dev0 != null && rec.lastDev != null && rec.samples.length > 1) {
@@ -224,7 +233,7 @@ export default function Step3ImuCapture({ nav }) {
         unitsDetected: "m/s^2",
         pairing: pairedCamera ? "paired" : "unpaired",
       },
-      summary: { cadenceSpm: m.cadenceSpm, strideTimeCvPct: m.strideTimeCvPct, stepSymmetryPct: m.stepSymmetryPct, moving: st.moving },
+      summary: { cadenceSpm: m.cadenceSpm, strideTimeCvPct: m.strideTimeCvPct, stepSymmetryPct: m.stepSymmetryPct, moving: st.moving, cadenceRejected },
       pairedCameraIndex: pairedCamera?.index ?? null,
       accepted,
     };

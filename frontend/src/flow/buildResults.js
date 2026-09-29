@@ -4,6 +4,7 @@
 // uncalibrated. Clinical factors are listed, never weighted. No invented
 // fusion weights or confidence percentages.
 import { isDemoDraft } from "./api/payloads";
+import { cadenceAgreement, AGREE_WITHIN_PCT } from "./plausibility";
 
 /** @typedef {import("./types").MultimodalResult} MultimodalResult */
 /** @typedef {import("./types").OARiskReport} OARiskReport */
@@ -57,6 +58,12 @@ export function buildMultimodal(result, draft) {
     factors: clin.map((c) => ({ label: c.factor, value: c.value })),
   };
 
+  // Camera and IMU measure cadence independently: compare them, never merge or copy.
+  const cadenceCheck = cadenceAgreement(
+    camUsable.map((t) => t.features?.cadence_steps_min),
+    imuTrials.map((t) => t.summary?.cadenceSpm),
+  );
+
   const flags = [];
   if (cameraDemo) flags.push("Camera trials are demo data: not a real screening.");
   if (imuDemo && !engineDemo) flags.push("IMU data is simulated (no hardware): IMU findings are not real.");
@@ -65,6 +72,9 @@ export function buildMultimodal(result, draft) {
   const highDrop = imuTrials.filter((t) => (t.quality.droppedPct ?? 0) > 5).length;
   if (highDrop) flags.push(`${highDrop} IMU trial(s) lost more than 5% of samples.`);
   if (dev == null) flags.push("No calibrated gait score: the band is not based on the reference cohort.");
+  if (cadenceCheck.status === "disagree") flags.push(`Camera and IMU cadence differ by ${cadenceCheck.diffPct}% (more than ${AGREE_WITHIN_PCT}%): one of the recordings is unreliable.`);
+  const rejected = draft.cameraTrials.filter((t) => t.accepted).reduce((n, t) => n + (t.rejectedFeatures?.length || 0), 0);
+  if (rejected) flags.push(`${rejected} implausible camera value(s) were left out (outside the human walking range).`);
 
   return {
     engineVersion: result.engine_version || "unknown",
@@ -75,6 +85,7 @@ export function buildMultimodal(result, draft) {
     bandSource: result.score_type === "gait_deviation_percentile" ? "vision"
       : result.score_type === "imu_irregularity_index" ? "imu" : null,
     modalities: [clinical, vision, imuMod],
+    cadenceCheck,
     dataQuality: {
       usableCameraTrials: camUsable.length,
       usableImuTrials: imuTrials.length,
@@ -102,6 +113,9 @@ export function suggestAction(mm, patient) {
     return mm.band === "Low"
       ? { action: "re-screen", why: "IMU pattern regular, but IMU is uncalibrated and no camera score exists: routine re-screen with camera." }
       : { action: "re-screen", why: "IMU pattern irregular, but IMU is uncalibrated: repeat with camera gait analysis and examine the knee before any referral." };
+  }
+  if (mm.cadenceCheck?.status === "disagree" && mm.band !== "High") {
+    return { action: "re-screen", why: `Camera (${mm.cadenceCheck.camera}) and IMU (${mm.cadenceCheck.imu}) cadence disagree by ${mm.cadenceCheck.diffPct}%: repeat both recordings before acting on the band.` };
   }
   switch (mm.band) {
     case "High":
